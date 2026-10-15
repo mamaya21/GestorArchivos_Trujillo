@@ -29,10 +29,26 @@ public class SyncDevicesController : ControllerBase
     {
         var userId = CurrentUserId();
 
-        var deviceName = request.Name.Trim();
+        if (request is null ||
+            string.IsNullOrWhiteSpace(request.Name) ||
+            string.IsNullOrWhiteSpace(request.OperatingSystem))
+        {
+            return BadRequest(new
+            {
+                message = "El nombre y el sistema operativo del dispositivo son obligatorios."
+            });
+        }
 
-        if (string.IsNullOrWhiteSpace(deviceName))
-            return BadRequest(new { message = "El nombre del dispositivo es obligatorio." });
+        var deviceName = request.Name.Trim();
+        var operatingSystem = request.OperatingSystem.Trim();
+
+        if (deviceName.Length > 255 || operatingSystem.Length > 255)
+        {
+            return BadRequest(new
+            {
+                message = "El nombre y el sistema operativo no pueden superar 255 caracteres."
+            });
+        }
 
         var duplicate = await _dbContext.DispositivosSync
             .AnyAsync(x =>
@@ -59,7 +75,7 @@ public class SyncDevicesController : ControllerBase
         {
             UsuarioId = userId,
             Nombre = deviceName,
-            SistemaOperativo = request.OperatingSystem.Trim(),
+            SistemaOperativo = operatingSystem,
             CarpetaRaiz = rootFolder
         };
 
