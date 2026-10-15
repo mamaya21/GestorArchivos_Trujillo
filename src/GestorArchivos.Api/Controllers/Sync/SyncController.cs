@@ -49,6 +49,13 @@ public class SyncController : ControllerBase
         if (device is null)
             return Unauthorized();
 
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
+                device.RootFolderId,
+                PermisoCarpeta.Leer,
+                cancellationToken))
+            return Forbid();
+
         var changes = await _dbContext.CambiosSync
             .AsNoTracking()
             .Where(x =>
@@ -128,6 +135,13 @@ public class SyncController : ControllerBase
 
         if (device is null)
             return Unauthorized();
+
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
+                device.RootFolderId,
+                PermisoCarpeta.Leer,
+                cancellationToken))
+            return Forbid();
 
         var items = await _dbContext.ElementosSync
             .AsNoTracking()
@@ -507,6 +521,13 @@ public class SyncController : ControllerBase
 
         if (device is null)
             return Unauthorized();
+
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
+                device.RootFolderId,
+                PermisoCarpeta.Leer,
+                cancellationToken))
+            return Forbid();
 
         var folders = await GetFolderTreeAsync(
             device.RootFolderId,
