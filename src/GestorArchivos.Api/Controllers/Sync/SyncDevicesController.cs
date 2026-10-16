@@ -100,17 +100,23 @@ public class SyncDevicesController : ControllerBase
             });
         }
 
-        var existing = await _dbContext.DispositivosSync
-            .FirstOrDefaultAsync(x =>
-                x.UsuarioId == userId &&
-                x.Nombre == deviceName,
-                cancellationToken);
+        // Solo revincular cuando el usuario eligió expresamente el dispositivo anterior.
+        var existing = request.ReuseDeviceId is Guid reuseId
+            ? await _dbContext.DispositivosSync.FirstOrDefaultAsync(
+                x => x.Id == reuseId && x.UsuarioId == userId, cancellationToken)
+            : null;
+
+        if (request.ReuseDeviceId.HasValue && existing is null)
+            return NotFound(new { message = "No se encontró el dispositivo anterior en esta cuenta." });
 
         if (existing?.Activo == true)
-            return Conflict(new { message = "Ya existe un dispositivo activo con ese nombre." });
+            return Conflict(new { message = "El dispositivo seleccionado ya está activo." });
 
         if (existing is not null)
         {
+            if (!string.Equals(existing.Nombre, deviceName, StringComparison.Ordinal))
+                return BadRequest(new { message = "El nombre no coincide con el dispositivo seleccionado." });
+
             // Recuperar la misma raíz sin restaurar credenciales antiguas.
             var oldCredentials = await _dbContext.CredencialesDispositivosSync
                 .Where(x => x.DispositivoId == existing.Id && !x.Revocada)
@@ -241,4 +247,5 @@ public class SyncDevicesController : ControllerBase
 
 public sealed record RegisterSyncDeviceRequest(
     string Name,
-    string OperatingSystem);
+    string OperatingSystem,
+    Guid? ReuseDeviceId = null);
