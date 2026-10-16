@@ -976,7 +976,7 @@ export default function FilesPage() {
       let localState: { paused: boolean; deviceId?: string } | null = null
       try {
         const response = await fetch('http://127.0.0.1:47831/control')
-        if (response.ok) localState = await response.json() as { paused: boolean }
+        if (response.ok) localState = await response.json() as { paused: boolean; deviceId?: string }
       } catch {
         // El cliente local puede no estar instalado o ejecutándose.
       }
@@ -986,10 +986,10 @@ export default function FilesPage() {
         title: 'Sincronización',
         html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
           <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
-          <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular requiere confirmar primero el control de credenciales y asociaciones.</p>`,
+          <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular conserva los archivos locales y remotos.</p>`,
         showCancelButton: true,
         showDenyButton: linkedHere !== undefined,
-        showConfirmButton: active.length === 0 || localState !== null,
+        showConfirmButton: active.length === 0 || linkedHere !== undefined,
         confirmButtonText: active.length === 0 ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
         denyButtonText: 'Desvincular este equipo',
         cancelButtonText: 'Cerrar',
@@ -1015,7 +1015,7 @@ export default function FilesPage() {
         return
       }
 
-      if (localState === null) return
+      if (localState === null || linkedHere === undefined) return
       const response = await fetch('http://127.0.0.1:47831/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
