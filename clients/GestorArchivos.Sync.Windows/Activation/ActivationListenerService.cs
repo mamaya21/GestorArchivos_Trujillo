@@ -103,10 +103,10 @@ public sealed class ActivationListenerService : BackgroundService
                 {
                     context.Response.ContentType = "application/json";
                     var paused = File.Exists(PausePath);
-                    var device = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
+                    var registeredDevice = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
                     await JsonSerializer.SerializeAsync(
                         context.Response.OutputStream,
-                        new { paused, deviceId = device?.DeviceId },
+                        new { paused, deviceId = registeredDevice?.DeviceId },
                         cancellationToken: cancellationToken);
                     context.Response.Close();
                     return;
