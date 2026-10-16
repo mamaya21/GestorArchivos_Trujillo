@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using GestorArchivos.Sync.Windows.Models;
+using GestorArchivos.Sync.Windows.Services;
 
 namespace GestorArchivos.Sync.Windows.Activation;
 
@@ -12,13 +13,16 @@ public sealed class ActivationListenerService : BackgroundService
         "GestorArchivos", "Sync", "paused.flag");
 
     private readonly IActivationService _activationService;
+    private readonly IDeviceRegistrationService _registrations;
     private readonly ILogger<ActivationListenerService> _logger;
 
     public ActivationListenerService(
         IActivationService activationService,
+        IDeviceRegistrationService registrations,
         ILogger<ActivationListenerService> logger)
     {
         _activationService = activationService;
+        _registrations = registrations;
         _logger = logger;
     }
 
@@ -89,9 +93,10 @@ public sealed class ActivationListenerService : BackgroundService
                 {
                     context.Response.ContentType = "application/json";
                     var paused = File.Exists(PausePath);
+                    var device = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
                     await JsonSerializer.SerializeAsync(
                         context.Response.OutputStream,
-                        new { paused },
+                        new { paused, deviceId = device?.DeviceId },
                         cancellationToken: cancellationToken);
                     context.Response.Close();
                     return;
