@@ -46,6 +46,32 @@ public class SyncDevicesController : ControllerBase
         return Ok(devices);
     }
 
+    [HttpPost("{deviceId:guid}/unlink")]
+    public async Task<IActionResult> Unlink(Guid deviceId, CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        var device = await _dbContext.DispositivosSync
+            .FirstOrDefaultAsync(x => x.Id == deviceId && x.UsuarioId == userId, cancellationToken);
+
+        if (device is null)
+            return NotFound();
+
+        device.Activo = false;
+        var credentials = await _dbContext.CredencialesDispositivosSync
+            .Where(x => x.DispositivoId == deviceId && !x.Revocada)
+            .ToListAsync(cancellationToken);
+
+        foreach (var credential in credentials)
+        {
+            credential.Revocada = true;
+            credential.FechaRevocacionUtc = DateTime.UtcNow;
+        }
+
+        // La carpeta raíz y los elementos remotos se conservan intactos.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         RegisterSyncDeviceRequest request,
@@ -74,15 +100,52 @@ public class SyncDevicesController : ControllerBase
             });
         }
 
-        var duplicate = await _dbContext.DispositivosSync
-            .AnyAsync(x =>
+        var existing = await _dbContext.DispositivosSync
+            .FirstOrDefaultAsync(x =>
                 x.UsuarioId == userId &&
-                x.Nombre == deviceName &&
-                x.Activo,
+                x.Nombre == deviceName,
                 cancellationToken);
 
-        if (duplicate)
+        if (existing?.Activo == true)
             return Conflict(new { message = "Ya existe un dispositivo activo con ese nombre." });
+
+        if (existing is not null)
+        {
+            // Recuperar la misma raíz sin restaurar credenciales antiguas.
+            var oldCredentials = await _dbContext.CredencialesDispositivosSync
+                .Where(x => x.DispositivoId == existing.Id && !x.Revocada)
+                .ToListAsync(cancellationToken);
+
+            foreach (var old in oldCredentials)
+            {
+                old.Revocada = true;
+                old.FechaRevocacionUtc = DateTime.UtcNow;
+            }
+
+            var renewedToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            existing.Activo = true;
+            existing.SistemaOperativo = operatingSystem;
+            _dbContext.CredencialesDispositivosSync.Add(new CredencialDispositivoSync
+            {
+                DispositivoId = existing.Id,
+                TokenHash = ComputeSha256(renewedToken)
+            });
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            var existingRootName = await _dbContext.Carpetas
+                .Where(x => x.Id == existing.CarpetaRaizId)
+                .Select(x => x.Nombre)
+                .SingleAsync(cancellationToken);
+
+            return Ok(new
+            {
+                deviceId = existing.Id,
+                deviceName = existing.Nombre,
+                rootFolderId = existing.CarpetaRaizId,
+                rootFolderName = existingRootName,
+                token = renewedToken
+            });
+        }
 
         var folderName = await GetAvailableRootFolderNameAsync(
             deviceName,
