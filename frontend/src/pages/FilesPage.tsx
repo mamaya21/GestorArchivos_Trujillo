@@ -973,7 +973,7 @@ export default function FilesPage() {
       ).join('')
 
       // El estado de pausa es local a esta computadora, no global a la cuenta.
-      let localState: { paused: boolean } | null = null
+      let localState: { paused: boolean; deviceId?: string } | null = null
       try {
         const response = await fetch('http://127.0.0.1:47831/control')
         if (response.ok) localState = await response.json() as { paused: boolean }
@@ -981,22 +981,30 @@ export default function FilesPage() {
         // El cliente local puede no estar instalado o ejecutándose.
       }
 
+      const linkedHere = active.find(d => d.deviceId === localState?.deviceId)
       const result = await Swal.fire({
         title: 'Sincronización',
         html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
           <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
           <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular requiere confirmar primero el control de credenciales y asociaciones.</p>`,
         showCancelButton: true,
-        showDenyButton: localState !== null,
+        showDenyButton: linkedHere !== undefined,
         showConfirmButton: active.length === 0 || localState !== null,
         confirmButtonText: active.length === 0 ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
-        denyButtonText: 'Actualizar estado',
+        denyButtonText: 'Desvincular este equipo',
         cancelButtonText: 'Cerrar',
         width: 540,
       })
 
-      if (result.isDenied) {
-        await openSyncManagement()
+      if (result.isDenied && linkedHere) {
+        const confirm = await Swal.fire({
+          icon: 'warning', title: 'Desvincular este equipo',
+          text: 'Se revocará la conexión. Los archivos de Windows y del servidor se conservarán.',
+          showCancelButton: true, confirmButtonText: 'Desvincular', cancelButtonText: 'Cancelar',
+        })
+        if (!confirm.isConfirmed) return
+        await apiRequest(`/sync/devices/${linkedHere.deviceId}/unlink`, { method: 'POST' })
+        await Swal.fire({ icon: 'success', title: 'Equipo desvinculado' })
         return
       }
       if (!result.isConfirmed) return
