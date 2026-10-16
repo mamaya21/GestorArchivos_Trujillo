@@ -74,6 +74,16 @@ public sealed class ActivationListenerService : BackgroundService
                 return;
             }
 
+            if (!IPAddress.IsLoopback(
+                    context.Request.RemoteEndPoint.Address))
+            {
+                context.Response.StatusCode =
+                    (int)HttpStatusCode.Forbidden;
+
+                context.Response.Close();
+                return;
+            }
+
             AddCorsHeaders(context.Response);
 
             if (context.Request.HttpMethod == "OPTIONS" &&
@@ -133,16 +143,6 @@ public sealed class ActivationListenerService : BackgroundService
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NotFound;
-
-                context.Response.Close();
-                return;
-            }
-
-            if (!IPAddress.IsLoopback(
-                    context.Request.RemoteEndPoint.Address))
-            {
-                context.Response.StatusCode =
-                    (int)HttpStatusCode.Forbidden;
 
                 context.Response.Close();
                 return;
