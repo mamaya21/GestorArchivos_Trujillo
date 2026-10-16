@@ -1096,9 +1096,17 @@ export default function FilesPage() {
         <div className="toolbar-actions">
           <button
             type="button"
+            onClick={() => { window.location.href = 'gestorarchivos-sync://selector' }}
+            title="Abrir el selector de carpetas y archivos de Windows"
+          >
+            Seleccionar sincronización
+          </button>
+
+          <button
+            type="button"
             onClick={() => void openSyncManagement()}
           >
-            Activar sincronización
+            Administrar sincronización
           </button>
 
           <button type="button" onClick={createFolder}>
