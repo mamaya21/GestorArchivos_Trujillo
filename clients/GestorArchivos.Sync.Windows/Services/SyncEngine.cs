@@ -34,6 +34,10 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     private bool _monitorStarted;
     private bool _disposed;
 
+    private static readonly string PausePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "paused.flag");
+
     private static readonly string SelectionsPath = Path.Combine(
         Environment.GetFolderPath(
             Environment.SpecialFolder.CommonApplicationData),
@@ -91,6 +95,20 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
             {
                 try
                 {
+                    // Pausar nunca altera selecciones, asociaciones ni archivos.
+                    if (File.Exists(PausePath))
+                    {
+                        if (_monitorStarted)
+                        {
+                            _localChangeMonitor.Stop();
+                            _monitorStarted = false;
+                        }
+
+                        _runtimeState.IsOnline = false;
+                        await DelayAsync(cancellationToken);
+                        continue;
+                    }
+
                     if (HasConfiguredSelections() && _monitorStarted)
                     {
                         _localChangeMonitor.Stop();
@@ -110,6 +128,9 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
                     try
                     {
+                        if (File.Exists(PausePath))
+                            continue;
+
                         if (HasConfiguredSelections() && _monitorStarted)
                         {
                             _localChangeMonitor.Stop();
@@ -189,7 +210,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                 catch (Exception ex)
                 {
                     _runtimeState.IsOnline = false;
-                    _log.Error(ex, "sincronizaciÛn");
+                    _log.Error(ex, "sincronizaci√≥n");
                 }
 
                 await DelayAsync(cancellationToken);
@@ -220,7 +241,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                 File.ReadAllText(SelectionsPath));
 
             // La existencia del archivo mantiene activo el modo selectivo,
-            // incluso con un arreglo vacÌo. Nunca se reactiva autom·ticamente
+            // incluso con un arreglo vac√≠o. Nunca se reactiva autom√°ticamente
             // el modo tradicional.
             return true;
         }
@@ -256,7 +277,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
             try
             {
-                if (!_runtimeState.IsOnline || HasConfiguredSelections())
+                if (!_runtimeState.IsOnline || HasConfiguredSelections() || File.Exists(PausePath))
                     return;
 
                 await _changePushService.PushAsync(
