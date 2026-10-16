@@ -7,6 +7,9 @@ namespace GestorArchivos.Sync.Windows.Activation;
 public sealed class ActivationListenerService : BackgroundService
 {
     private const string AllowedOrigin = "http://localhost:5173";
+    private static readonly string PausePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "paused.flag");
 
     private readonly IActivationService _activationService;
     private readonly ILogger<ActivationListenerService> _logger;
@@ -70,13 +73,54 @@ public sealed class ActivationListenerService : BackgroundService
             AddCorsHeaders(context.Response);
 
             if (context.Request.HttpMethod == "OPTIONS" &&
-                context.Request.Url?.AbsolutePath == "/activate")
+                (context.Request.Url?.AbsolutePath == "/activate" ||
+                 context.Request.Url?.AbsolutePath == "/control"))
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NoContent;
 
                 context.Response.Close();
                 return;
+            }
+
+            if (context.Request.Url?.AbsolutePath == "/control")
+            {
+                if (context.Request.HttpMethod == "GET")
+                {
+                    context.Response.ContentType = "application/json";
+                    var paused = File.Exists(PausePath);
+                    await JsonSerializer.SerializeAsync(
+                        context.Response.OutputStream,
+                        new { paused },
+                        cancellationToken: cancellationToken);
+                    context.Response.Close();
+                    return;
+                }
+
+                if (context.Request.HttpMethod == "POST")
+                {
+                    var command = await JsonSerializer.DeserializeAsync<SyncControlRequest>(
+                        context.Request.InputStream,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
+                        cancellationToken);
+
+                    if (command?.Paused is not bool pause)
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        context.Response.Close();
+                        return;
+                    }
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
+                    if (pause)
+                        await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                    else if (File.Exists(PausePath))
+                        File.Delete(PausePath);
+
+                    context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                    context.Response.Close();
+                    return;
+                }
             }
 
             if (context.Request.HttpMethod != "POST" ||
@@ -142,7 +186,7 @@ public sealed class ActivationListenerService : BackgroundService
         {
             _logger.LogError(
                 ex,
-                "Error procesando activación local.");
+                "Error procesando activaciÃ³n local.");
 
             if (context.Response.OutputStream.CanWrite)
             {
@@ -163,9 +207,10 @@ public sealed class ActivationListenerService : BackgroundService
             AllowedOrigin;
 
         response.Headers["Access-Control-Allow-Methods"] =
-            "POST, OPTIONS";
+            "GET, POST, OPTIONS";
 
         response.Headers["Access-Control-Allow-Headers"] =
             "Content-Type";
     }
 }
+public sealed record SyncControlRequest(bool? Paused);
