@@ -969,35 +969,58 @@ export default function FilesPage() {
 
       const active = devices.filter((device) => device.active)
       const rows = active.map((device) =>
-        `<div style="padding:8px 0;text-align:left;border-bottom:1px solid #ddd"><strong>${escapeSyncHtml(device.deviceName)}</strong><br/><small>Carpeta: ${escapeSyncHtml(device.rootFolderName)} · ${device.lastConnectionUtc ? 'Última conexión registrada' : 'Sin conexión registrada'}</small></div>`,
+        `<div style="padding:8px 0;text-align:left;border-bottom:1px solid #ddd"><strong>${escapeSyncHtml(device.deviceName)}</strong><br/><small>Carpeta: ${escapeSyncHtml(device.rootFolderName)}</small></div>`,
       ).join('')
+
+      // El estado de pausa es local a esta computadora, no global a la cuenta.
+      let localState: { paused: boolean } | null = null
+      try {
+        const response = await fetch('http://127.0.0.1:47831/control')
+        if (response.ok) localState = await response.json() as { paused: boolean }
+      } catch {
+        // El cliente local puede no estar instalado o ejecutándose.
+      }
 
       const result = await Swal.fire({
         title: 'Sincronización',
-        html: active.length
-          ? `<p>Equipos vinculados: ${active.length}</p>${rows}<p style="font-size:13px">Para modificar carpetas, abre el selector de Windows. Pausar, reanudar y desvincular estarán disponibles cuando el control local esté implementado.</p>`
-          : '<p>No hay equipos activos vinculados a esta cuenta.</p>',
+        html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
+          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
+          <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular requiere confirmar primero el control de credenciales y asociaciones.</p>`,
         showCancelButton: true,
-        showConfirmButton: active.length === 0,
-        confirmButtonText: 'Activar sincronización',
+        showDenyButton: localState !== null,
+        showConfirmButton: active.length === 0 || localState !== null,
+        confirmButtonText: active.length === 0 ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
+        denyButtonText: 'Actualizar estado',
         cancelButtonText: 'Cerrar',
         width: 540,
       })
 
+      if (result.isDenied) {
+        await openSyncManagement()
+        return
+      }
       if (!result.isConfirmed) return
 
-      await activateSyncOnThisComputer()
+      if (active.length === 0) {
+        await activateSyncOnThisComputer()
+        await Swal.fire({ icon: 'success', title: 'Dispositivo registrado' })
+        return
+      }
+
+      if (localState === null) return
+      const response = await fetch('http://127.0.0.1:47831/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: !localState.paused }),
+      })
+      if (!response.ok) throw new Error(`El cliente local respondió HTTP ${response.status}`)
       await Swal.fire({
         icon: 'success',
-        title: 'Dispositivo registrado',
-        text: 'El equipo quedó registrado. Configura las carpetas desde el selector de Windows.',
+        title: localState.paused ? 'Sincronización reanudada' : 'Sincronización pausada',
+        text: localState.paused ? 'El motor retomará la reconciliación en su siguiente ciclo.' : 'No se iniciarán nuevos ciclos de sincronización.',
       })
     } catch (error) {
-      await Swal.fire({
-        icon: 'error',
-        title: 'No se pudo administrar la sincronización',
-        text: getError(error),
-      })
+      await Swal.fire({ icon: 'error', title: 'Error de sincronización', text: getError(error) })
     }
   }
 
