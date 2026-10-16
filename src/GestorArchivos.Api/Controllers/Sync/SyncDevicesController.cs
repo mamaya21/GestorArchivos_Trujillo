@@ -22,6 +22,30 @@ public class SyncDevicesController : ControllerBase
         _dbContext = dbContext;
     }
 
+    // Estado de los dispositivos del usuario. No exponer credenciales ni tokens.
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+
+        var devices = await _dbContext.DispositivosSync
+            .AsNoTracking()
+            .Where(x => x.UsuarioId == userId)
+            .OrderByDescending(x => x.FechaRegistro)
+            .Select(x => new
+            {
+                deviceId = x.Id,
+                deviceName = x.Nombre,
+                rootFolderId = x.CarpetaRaizId,
+                rootFolderName = x.CarpetaRaiz.Nombre,
+                active = x.Activo,
+                lastConnectionUtc = x.UltimaConexionUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(devices);
+    }
+
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         RegisterSyncDeviceRequest request,
