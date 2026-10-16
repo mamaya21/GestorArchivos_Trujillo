@@ -957,23 +957,105 @@ export default function FilesPage() {
     }
   }
 
-  async function activateSync() {
-  try {
-    await activateSyncOnThisComputer()
+  async function openSyncManagement() {
+    try {
+      const devices = await apiRequest<Array<{
+        deviceId: string
+        deviceName: string
+        rootFolderName: string
+        active: boolean
+        lastConnectionUtc: string | null
+      }>>('/sync/devices')
 
-    await Swal.fire({
-      icon: 'success',
-      title: 'Sincronización activada',
-      text: 'Este equipo quedó registrado correctamente.',
-    })
-  } catch (error) {
-    await Swal.fire({
-      icon: 'error',
-      title: 'No se pudo activar',
-      text: getError(error),
-    })
+      const active = devices.filter((device) => device.active)
+      const rows = active.map((device) =>
+        `<div style="padding:8px 0;text-align:left;border-bottom:1px solid #ddd"><strong>${escapeSyncHtml(device.deviceName)}</strong><br/><small>Carpeta: ${escapeSyncHtml(device.rootFolderName)}</small></div>`,
+      ).join('')
+
+      // El estado de pausa es local a esta computadora, no global a la cuenta.
+      let localState: { paused: boolean; deviceId?: string } | null = null
+      try {
+        const response = await fetch('http://127.0.0.1:47831/control')
+        if (response.ok) localState = await response.json() as { paused: boolean; deviceId?: string }
+      } catch {
+        // El cliente local puede no estar instalado o ejecutándose.
+      }
+
+      const linkedHere = active.find(d => d.deviceId === localState?.deviceId)
+      const result = await Swal.fire({
+        title: 'Sincronización',
+        html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
+          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
+          <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular conserva los archivos locales y remotos.</p>`,
+        showCancelButton: true,
+        showDenyButton: linkedHere !== undefined,
+        showConfirmButton: active.length === 0 || linkedHere !== undefined,
+        confirmButtonText: active.length === 0 ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
+        denyButtonText: 'Desvincular este equipo',
+        cancelButtonText: 'Cerrar',
+        width: 540,
+      })
+
+      if (result.isDenied && linkedHere) {
+        const confirm = await Swal.fire({
+          icon: 'warning', title: 'Desvincular este equipo',
+          text: 'Se revocará la conexión. Los archivos de Windows y del servidor se conservarán.',
+          showCancelButton: true, confirmButtonText: 'Desvincular', cancelButtonText: 'Cancelar',
+        })
+        if (!confirm.isConfirmed) return
+        await apiRequest(`/sync/devices/${linkedHere.deviceId}/unlink`, { method: 'POST' })
+        await Swal.fire({ icon: 'success', title: 'Equipo desvinculado' })
+        return
+      }
+      if (!result.isConfirmed) return
+
+      if (active.length === 0) {
+        const previous = devices.filter(device => !device.active)
+        let reuseDeviceId: string | undefined
+        let reuseDeviceName: string | undefined
+        if (previous.length > 0) {
+          const choice = await Swal.fire({
+            title: 'Configurar sincronización',
+            input: 'select',
+            inputOptions: {
+              new: 'Registrar como equipo nuevo (crear carpeta nueva)',
+              ...Object.fromEntries(previous.map(device => [device.deviceId,
+                `Revincular ${device.deviceName} (conservar carpeta ${device.rootFolderName})`])),
+            },
+            inputValue: 'new',
+            showCancelButton: true,
+            confirmButtonText: 'Continuar',
+            cancelButtonText: 'Cancelar',
+          })
+          if (!choice.isConfirmed) return
+          if (choice.value !== 'new') {
+            const selected = previous.find(device => device.deviceId === choice.value)
+            if (!selected) throw new Error('Dispositivo anterior no válido')
+            reuseDeviceId = selected.deviceId
+            reuseDeviceName = selected.deviceName
+          }
+        }
+        await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
+        await Swal.fire({ icon: 'success', title: 'Dispositivo registrado' })
+        return
+      }
+
+      if (localState === null || linkedHere === undefined) return
+      const response = await fetch('http://127.0.0.1:47831/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: !localState.paused }),
+      })
+      if (!response.ok) throw new Error(`El cliente local respondió HTTP ${response.status}`)
+      await Swal.fire({
+        icon: 'success',
+        title: localState.paused ? 'Sincronización reanudada' : 'Sincronización pausada',
+        text: localState.paused ? 'El motor retomará la reconciliación en su siguiente ciclo.' : 'No se iniciarán nuevos ciclos de sincronización.',
+      })
+    } catch (error) {
+      await Swal.fire({ icon: 'error', title: 'Error de sincronización', text: getError(error) })
+    }
   }
-}
 
   return (
     <div
@@ -1039,9 +1121,17 @@ export default function FilesPage() {
         <div className="toolbar-actions">
           <button
             type="button"
-            onClick={() => void activateSync()}
+            onClick={() => { window.location.href = 'gestorarchivos-sync://selector' }}
+            title="Abrir el selector de carpetas y archivos de Windows"
           >
-            Activar sincronización
+            Seleccionar sincronización
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void openSyncManagement()}
+          >
+            Administrar sincronización
           </button>
 
           <button type="button" onClick={createFolder}>
@@ -1509,4 +1599,13 @@ function getError(error: unknown) {
   return error instanceof Error
     ? error.message
     : 'Ocurrió un error inesperado.'
+}
+
+function escapeSyncHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }
+    return entities[character] ?? character
+  })
 }

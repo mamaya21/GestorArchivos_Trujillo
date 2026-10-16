@@ -49,15 +49,16 @@ public sealed class SelectiveSyncService
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
 
+        // Una selecci√≥n vac√≠a es v√°lida: el equipo permanece vinculado,
+        // pero no se realizan transferencias ni se activa el modo tradicional.
         if (selections.Count == 0)
-            throw new InvalidOperationException(
-                "El modo selectivo no tiene selecciones v·lidas.");
+            return;
 
         var snapshot = await _api.GetSnapshotAsync(cancellationToken);
 
         if (snapshot.RootFolderId == Guid.Empty)
             throw new InvalidOperationException(
-                "El servidor no devolviÛ una raÌz Sync v·lida.");
+                "El servidor no devolvi√≥ una ra√≠z Sync v√°lida.");
 
         foreach (var selection in selections)
         {
@@ -103,7 +104,7 @@ public sealed class SelectiveSyncService
                     rootItem.CarpetaRemotaId is not Guid remoteFolderId)
                 {
                     throw new InvalidOperationException(
-                        $"AsociaciÛn remota inv·lida: '{selection.Path}'.");
+                        $"Asociaci√≥n remota inv√°lida: '{selection.Path}'.");
                 }
 
                 await SyncFolderAsync(
@@ -141,7 +142,7 @@ public sealed class SelectiveSyncService
                 !item.ArchivoRemotoId.HasValue)
             {
                 throw new InvalidOperationException(
-                    $"AsociaciÛn de archivo inv·lida: '{localPath}'.");
+                    $"Asociaci√≥n de archivo inv√°lida: '{localPath}'.");
             }
 
             await ReconcileFileAsync(item, cancellationToken);
@@ -156,7 +157,7 @@ public sealed class SelectiveSyncService
             NamesEqual(f.Nombre, name)))
         {
             throw new InvalidOperationException(
-                $"El archivo remoto '{name}' ya existe sin asociaciÛn verificable.");
+                $"El archivo remoto '{name}' ya existe sin asociaci√≥n verificable.");
         }
 
         await using var stream = await _store.OpenReadAsync(
@@ -228,10 +229,10 @@ public sealed class SelectiveSyncService
             items,
             cancellationToken);
 
-        // Refrescar las asociaciones despuÈs de limpiar las obsoletas.
+        // Refrescar las asociaciones despu√©s de limpiar las obsoletas.
         items = await _api.GetItemsAsync(cancellationToken);
 
-        // Refrescar el listado fÌsico despuÈs de mover archivos recuperables.
+        // Refrescar el listado f√≠sico despu√©s de mover archivos recuperables.
         localFiles = Directory
             .EnumerateFiles(localFolderPath)
             .Where(p => !IsInternalSyncFileName(Path.GetFileName(p)))
@@ -263,7 +264,7 @@ public sealed class SelectiveSyncService
                  existingMapping.CarpetaRemotaId != remoteFolder.Id))
             {
                 throw new InvalidOperationException(
-                    $"La carpeta '{localChild}' tiene otra asociaciÛn remota.");
+                    $"La carpeta '{localChild}' tiene otra asociaci√≥n remota.");
             }
 
             var mappedElsewhere = items.FirstOrDefault(x =>
@@ -272,7 +273,7 @@ public sealed class SelectiveSyncService
 
             if (mappedElsewhere is not null)
                 throw new InvalidOperationException(
-                    $"La carpeta remota ya est· asociada a '{mappedElsewhere.RutaLocal}'.");
+                    $"La carpeta remota ya est√° asociada a '{mappedElsewhere.RutaLocal}'.");
 
             if (matchingLocalFolderPath is null)
             {
@@ -322,13 +323,13 @@ public sealed class SelectiveSyncService
             if (existingMapping is not null)
             {
                 throw new InvalidOperationException(
-                    $"Se bloqueÛ la recreaciÛn de '{localFolder.Value}'. " +
-                    "La carpeta ya tiene una asociaciÛn remota registrada.");
+                    $"Se bloque√≥ la recreaci√≥n de '{localFolder.Value}'. " +
+                    "La carpeta ya tiene una asociaci√≥n remota registrada.");
             }
 
             if (IsReparsePoint(localFolder.Value))
                 throw new InvalidOperationException(
-                    $"No se sincronizar· un enlace o punto de montaje: '{localFolder.Value}'.");
+                    $"No se sincronizar√° un enlace o punto de montaje: '{localFolder.Value}'.");
 
             var created = await _api.CreateAtomicRemoteFolderAsync(
                 remoteFolderId,
@@ -342,7 +343,7 @@ public sealed class SelectiveSyncService
                 !NamesEqual(created.Nombre, localFolder.Key))
             {
                 throw new InvalidOperationException(
-                    $"Respuesta atÛmica inv·lida para '{localFolder.Value}'.");
+                    $"Respuesta at√≥mica inv√°lida para '{localFolder.Value}'.");
             }
 
             var confirmed = await FindItemByLocalPathAsync(
@@ -355,7 +356,7 @@ public sealed class SelectiveSyncService
                 confirmed.CarpetaRemotaId != created.RemoteFolderId)
             {
                 throw new InvalidOperationException(
-                    $"No se pudo verificar la asociaciÛn atÛmica de '{localFolder.Value}'.");
+                    $"No se pudo verificar la asociaci√≥n at√≥mica de '{localFolder.Value}'.");
             }
 
             await SyncFolderAsync(
@@ -394,7 +395,7 @@ public sealed class SelectiveSyncService
             if (existsLocally && fileItem is null)
             {
                 throw new InvalidOperationException(
-                    $"ColisiÛn local/remota sin asociaciÛn: '{localPath}'.");
+                    $"Colisi√≥n local/remota sin asociaci√≥n: '{localPath}'.");
             }
 
             if (fileItem is null)
@@ -406,7 +407,7 @@ public sealed class SelectiveSyncService
                     !PathsEqual(mappedElsewhere.RutaLocal, localPath))
                 {
                     throw new InvalidOperationException(
-                        $"El archivo remoto ya est· asociado a '{mappedElsewhere.RutaLocal}'.");
+                        $"El archivo remoto ya est√° asociado a '{mappedElsewhere.RutaLocal}'.");
                 }
 
                 await _download.DownloadAsync(
@@ -425,7 +426,7 @@ public sealed class SelectiveSyncService
                      fileItem.ArchivoRemotoId != remoteFile.Id)
             {
                 throw new InvalidOperationException(
-                    $"AsociaciÛn remota diferente: '{localPath}'.");
+                    $"Asociaci√≥n remota diferente: '{localPath}'.");
             }
 
             await ReconcileFileAsync(
@@ -472,7 +473,7 @@ public sealed class SelectiveSyncService
                 NormalizedNameComparer.Instance);
 
         // Refrescar el estado remoto para no recrear archivos
-        // a partir de informaciÛn desactualizada.
+        // a partir de informaci√≥n desactualizada.
         snapshot = await _api.GetSnapshotAsync(cancellationToken);
 
         remoteFiles = snapshot.Files
@@ -499,7 +500,7 @@ public sealed class SelectiveSyncService
                 var associated = await FindItemByLocalPathAsync(localFile.Value, cancellationToken);
                 if (associated?.Tipo != SyncItemType.File ||
                     associated.ArchivoRemotoId != matchingRemoteFiles[0].Id)
-                    throw new InvalidOperationException($"ColisiÛn sin asociaciÛn verificable: '{localFile.Value}'.");
+                    throw new InvalidOperationException($"Colisi√≥n sin asociaci√≥n verificable: '{localFile.Value}'.");
                 continue;
             }
 
@@ -516,14 +517,14 @@ public sealed class SelectiveSyncService
             if (existingMapping is not null)
             {
                 throw new InvalidOperationException(
-                    $"Se bloqueÛ la recreaciÛn de '{localFile.Value}'. " +
-                    "El archivo ya tiene una asociaciÛn remota registrada.");
+                    $"Se bloque√≥ la recreaci√≥n de '{localFile.Value}'. " +
+                    "El archivo ya tiene una asociaci√≥n remota registrada.");
             }
 
             ValidatePathWithoutLinks(localFile.Value);
             if (IsReparsePoint(localFile.Value))
                 throw new InvalidOperationException(
-                    $"No se sincronizar· un enlace: '{localFile.Value}'.");
+                    $"No se sincronizar√° un enlace: '{localFile.Value}'.");
 
             await using var stream = await _store.OpenReadAsync(
                 localFile.Value,
@@ -560,7 +561,7 @@ public sealed class SelectiveSyncService
                 x.ArchivoRemotoId == remote.Id).ToList();
 
             // No se debe eliminar un archivo remoto si no existe una
-            // asociaciÛn ˙nica y comprobable con este directorio.
+            // asociaci√≥n √∫nica y comprobable con este directorio.
             if (mappings.Count != 1)
                 continue;
 
@@ -571,8 +572,8 @@ public sealed class SelectiveSyncService
                 File.Exists(item.RutaLocal))
                 continue;
 
-            // Si la ruta cambiÛ de tipo, o el archivo est· inaccesible,
-            // no convertirlo en una eliminaciÛn.
+            // Si la ruta cambi√≥ de tipo, o el archivo est√° inaccesible,
+            // no convertirlo en una eliminaci√≥n.
             if (Directory.Exists(item.RutaLocal))
                 throw new InvalidOperationException(
                     $"Conflicto de tipo en '{item.RutaLocal}'.");
@@ -588,7 +589,7 @@ public sealed class SelectiveSyncService
                 continue;
             }
 
-            // Si hubo cambios en la web desde la ˙ltima sincronizaciÛn,
+            // Si hubo cambios en la web desde la √∫ltima sincronizaci√≥n,
             // no eliminar: debe resolverse el conflicto por separado.
             if (remote.Version != baseline.RemoteVersion ||
                 !HashesEqual(remote.HashSha256, baseline.RemoteHash))
@@ -635,7 +636,7 @@ public sealed class SelectiveSyncService
                 continue;
 
             // El archivo existe en otra carpeta remota.
-            // No interpretar un traslado como eliminaciÛn.
+            // No interpretar un traslado como eliminaci√≥n.
             if (allRemoteFileIds.Contains(remoteId))
                 continue;
 
@@ -665,7 +666,7 @@ public sealed class SelectiveSyncService
                         baseline.RemoteHash))
                 {
                     throw new InvalidOperationException(
-                        $"No se puede resolver la eliminaciÛn remota " +
+                        $"No se puede resolver la eliminaci√≥n remota " +
                         $"de '{localPath}': falta un baseline confiable.");
                 }
 
@@ -677,7 +678,7 @@ public sealed class SelectiveSyncService
 
                 if (HashesEqual(currentHash, baseline.LocalHash))
                 {
-                    // El contenido coincide con la ˙ltima sincronizaciÛn.
+                    // El contenido coincide con la √∫ltima sincronizaci√≥n.
                     // Conservar una copia recuperable antes de retirarlo.
                     var recoveryDirectory = Path.Combine(
                         Environment.GetFolderPath(
@@ -700,13 +701,13 @@ public sealed class SelectiveSyncService
                         Path.GetFileName(localPath));
                 }
 
-                // Si el hash cambiÛ, conservar el archivo local.
-                // DespuÈs de desvincularlo podr· tratarse como
+                // Si el hash cambi√≥, conservar el archivo local.
+                // Despu√©s de desvincularlo podr√° tratarse como
                 // archivo nuevo durante LOCAL -> REMOTO.
             }
 
-            // TambiÈn se ejecuta si el archivo ya no existe
-            // fÌsicamente. AsÌ se limpian asociaciones antiguas
+            // Tambi√©n se ejecuta si el archivo ya no existe
+            // f√≠sicamente. As√≠ se limpian asociaciones antiguas
             // de eliminaciones procesadas en ciclos anteriores.
             await _api.DeleteItemAsync(
                 item.SyncItemId,
@@ -728,7 +729,7 @@ public sealed class SelectiveSyncService
             string.IsNullOrWhiteSpace(result.HashSha256))
         {
             throw new InvalidOperationException(
-                $"El servidor devolviÛ una asociaciÛn de archivo inv·lida para '{localPath}'.");
+                $"El servidor devolvi√≥ una asociaci√≥n de archivo inv√°lida para '{localPath}'.");
         }
     }
 
@@ -754,7 +755,7 @@ public sealed class SelectiveSyncService
 
             if (!matches)
                 throw new InvalidOperationException(
-                    $"AsociaciÛn remota diferente: '{path}'.");
+                    $"Asociaci√≥n remota diferente: '{path}'.");
 
             return;
         }
@@ -768,7 +769,7 @@ public sealed class SelectiveSyncService
             !PathsEqual(mappedElsewhere.RutaLocal, path))
         {
             throw new InvalidOperationException(
-                $"El elemento remoto ya est· asociado a '{mappedElsewhere.RutaLocal}'.");
+                $"El elemento remoto ya est√° asociado a '{mappedElsewhere.RutaLocal}'.");
         }
 
         await _api.RegisterItemAsync(
@@ -785,7 +786,7 @@ public sealed class SelectiveSyncService
     {
         if (!item.ArchivoRemotoId.HasValue)
             throw new InvalidOperationException(
-                $"Archivo sin asociaciÛn remota: '{item.RutaLocal}'.");
+                $"Archivo sin asociaci√≥n remota: '{item.RutaLocal}'.");
 
         RemoteFile remote;
 
@@ -808,7 +809,7 @@ public sealed class SelectiveSyncService
                 x.Id == item.ArchivoRemotoId.Value))
             {
                 throw new InvalidOperationException(
-                    $"El archivo '{item.RutaLocal}' contin˙a en el snapshot " +
+                    $"El archivo '{item.RutaLocal}' contin√∫a en el snapshot " +
                     "pero su consulta individual devuelve 404.",
                     ex);
             }
@@ -820,7 +821,7 @@ public sealed class SelectiveSyncService
                 !Directory.Exists(parent))
             {
                 throw new InvalidOperationException(
-                    $"La carpeta local de '{item.RutaLocal}' no est· disponible.",
+                    $"La carpeta local de '{item.RutaLocal}' no est√° disponible.",
                     ex);
             }
 
@@ -836,7 +837,7 @@ public sealed class SelectiveSyncService
                     p => p,
                     NormalizedNameComparer.Instance);
 
-            // Procesar la eliminaciÛn mediante el mecanismo existente,
+            // Procesar la eliminaci√≥n mediante el mecanismo existente,
             // que verifica el baseline y conserva una copia recuperable.
             await HandleRemoteFileDeletionsAsync(
                 snapshot.Files.Select(x => x.Id).ToHashSet(),
@@ -868,7 +869,7 @@ public sealed class SelectiveSyncService
         if (previous is null)
             throw new InvalidOperationException(
                 $"Sin baseline verificable: '{item.RutaLocal}'. " +
-                "Se bloqueÛ la sobrescritura.");
+                "Se bloque√≥ la sobrescritura.");
 
         var localChanged = !HashesEqual(
             localHash,
@@ -948,8 +949,8 @@ public sealed class SelectiveSyncService
                 IsSelectedItemPath(x.RutaLocal, selections))
             .ToDictionary(x => x.SyncItemId);
 
-        // Conservar ˙nicamente baselines de asociaciones activas
-        // cuyos archivos remotos todavÌa existen.
+        // Conservar √∫nicamente baselines de asociaciones activas
+        // cuyos archivos remotos todav√≠a existen.
         var baseline = old
             .Where(x =>
                 activeItems.TryGetValue(x.SyncItemId, out var item) &&
@@ -1044,7 +1045,7 @@ public sealed class SelectiveSyncService
             {
                 PropertyNameCaseInsensitive = true
             }) ?? throw new InvalidOperationException(
-                "ConfiguraciÛn de selecciÛn inv·lida.");
+                "Configuraci√≥n de selecci√≥n inv√°lida.");
 
         var unique = new HashSet<string>(
             StringComparer.OrdinalIgnoreCase);
@@ -1057,7 +1058,7 @@ public sealed class SelectiveSyncService
                 (selection.Kind != 0 && selection.Kind != 1))
             {
                 throw new InvalidOperationException(
-                    "La configuraciÛn contiene una selecciÛn inv·lida.");
+                    "La configuraci√≥n contiene una selecci√≥n inv√°lida.");
             }
 
             selection.Path = Path.GetFullPath(selection.Path);
@@ -1141,8 +1142,8 @@ public sealed class SelectiveSyncService
                 FileAttributes.ReparsePoint) != 0;
     }
 
-    // Solo excluye los nombres tÈcnicos exactos generados por el cliente Sync.
-    // No excluye otros archivos del usuario con extensiÛn .tmp o .backup.
+    // Solo excluye los nombres t√©cnicos exactos generados por el cliente Sync.
+    // No excluye otros archivos del usuario con extensi√≥n .tmp o .backup.
     private static bool IsInternalSyncFileName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name))

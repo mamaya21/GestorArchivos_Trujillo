@@ -30,15 +30,15 @@ public sealed class Worker : BackgroundService
 
         try
         {
-            if (!await _activationService.IsActivatedAsync(stoppingToken))
+            while (!stoppingToken.IsCancellationRequested &&
+                   !await _activationService.IsActivatedAsync(stoppingToken))
             {
-                _logger.LogWarning(
-                    "Cliente Sync no activado. Se requiere registrar este dispositivo antes de iniciar la sincronización.");
-
-                return;
+                _logger.LogInformation("Esperando activaciÃ³n del dispositivo Sync.");
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
 
-            await _syncEngine.RunAsync(stoppingToken);
+            if (!stoppingToken.IsCancellationRequested)
+                await _syncEngine.RunAsync(stoppingToken);
         }
         catch (OperationCanceledException)
             when (stoppingToken.IsCancellationRequested)
@@ -46,7 +46,7 @@ public sealed class Worker : BackgroundService
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "ejecución del servicio");
+            _log.Error(ex, "ejecuciÃ³n del servicio");
             throw;
         }
         finally
