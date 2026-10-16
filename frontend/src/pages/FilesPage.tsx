@@ -957,23 +957,49 @@ export default function FilesPage() {
     }
   }
 
-  async function activateSync() {
-  try {
-    await activateSyncOnThisComputer()
+  async function openSyncManagement() {
+    try {
+      const devices = await apiRequest<Array<{
+        deviceId: string
+        deviceName: string
+        rootFolderName: string
+        active: boolean
+        lastConnectionUtc: string | null
+      }>>('/sync/devices')
 
-    await Swal.fire({
-      icon: 'success',
-      title: 'Sincronización activada',
-      text: 'Este equipo quedó registrado correctamente.',
-    })
-  } catch (error) {
-    await Swal.fire({
-      icon: 'error',
-      title: 'No se pudo activar',
-      text: getError(error),
-    })
+      const active = devices.filter((device) => device.active)
+      const rows = active.map((device) =>
+        `<div style="padding:8px 0;text-align:left;border-bottom:1px solid #ddd"><strong>${escapeSyncHtml(device.deviceName)}</strong><br/><small>Carpeta: ${escapeSyncHtml(device.rootFolderName)} · ${device.lastConnectionUtc ? 'Última conexión registrada' : 'Sin conexión registrada'}</small></div>`,
+      ).join('')
+
+      const result = await Swal.fire({
+        title: 'Sincronización',
+        html: active.length
+          ? `<p>Equipos vinculados: ${active.length}</p>${rows}<p style="font-size:13px">Para modificar carpetas, abre el selector de Windows. Pausar, reanudar y desvincular estarán disponibles cuando el control local esté implementado.</p>`
+          : '<p>No hay equipos activos vinculados a esta cuenta.</p>',
+        showCancelButton: true,
+        showConfirmButton: active.length === 0,
+        confirmButtonText: 'Activar sincronización',
+        cancelButtonText: 'Cerrar',
+        width: 540,
+      })
+
+      if (!result.isConfirmed) return
+
+      await activateSyncOnThisComputer()
+      await Swal.fire({
+        icon: 'success',
+        title: 'Dispositivo registrado',
+        text: 'El equipo quedó registrado. Configura las carpetas desde el selector de Windows.',
+      })
+    } catch (error) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'No se pudo administrar la sincronización',
+        text: getError(error),
+      })
+    }
   }
-}
 
   return (
     <div
@@ -1039,7 +1065,7 @@ export default function FilesPage() {
         <div className="toolbar-actions">
           <button
             type="button"
-            onClick={() => void activateSync()}
+            onClick={() => void openSyncManagement()}
           >
             Activar sincronización
           </button>
@@ -1509,4 +1535,13 @@ function getError(error: unknown) {
   return error instanceof Error
     ? error.message
     : 'Ocurrió un error inesperado.'
+}
+
+function escapeSyncHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }
+    return entities[character] ?? character
+  })
 }
