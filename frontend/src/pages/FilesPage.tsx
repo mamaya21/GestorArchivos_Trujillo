@@ -1010,7 +1010,32 @@ export default function FilesPage() {
       if (!result.isConfirmed) return
 
       if (active.length === 0) {
-        await activateSyncOnThisComputer()
+        const previous = devices.filter(device => !device.active)
+        let reuseDeviceId: string | undefined
+        let reuseDeviceName: string | undefined
+        if (previous.length > 0) {
+          const choice = await Swal.fire({
+            title: 'Configurar sincronización',
+            input: 'select',
+            inputOptions: {
+              new: 'Registrar como equipo nuevo (crear carpeta nueva)',
+              ...Object.fromEntries(previous.map(device => [device.deviceId,
+                `Revincular ${device.deviceName} (conservar carpeta ${device.rootFolderName})`])),
+            },
+            inputValue: 'new',
+            showCancelButton: true,
+            confirmButtonText: 'Continuar',
+            cancelButtonText: 'Cancelar',
+          })
+          if (!choice.isConfirmed) return
+          if (choice.value !== 'new') {
+            const selected = previous.find(device => device.deviceId === choice.value)
+            if (!selected) throw new Error('Dispositivo anterior no válido')
+            reuseDeviceId = selected.deviceId
+            reuseDeviceName = selected.deviceName
+          }
+        }
+        await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
         await Swal.fire({ icon: 'success', title: 'Dispositivo registrado' })
         return
       }
