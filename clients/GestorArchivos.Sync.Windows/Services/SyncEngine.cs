@@ -22,6 +22,8 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     private readonly SyncBaselineService _baselineService;
     private readonly SelectiveSyncService _selectiveSyncService;
     private readonly ISyncApiClient _syncApiClient;
+    private readonly IDeviceRegistrationService _registrations;
+    private Guid? _runningDeviceId;
     private readonly ILocalChangeMonitor _localChangeMonitor;
     private readonly ILocalStateStore _stateStore;
     private readonly SyncRuntimeState _runtimeState;
@@ -54,6 +56,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         SyncBaselineService baselineService,
         SelectiveSyncService selectiveSyncService,
         ISyncApiClient syncApiClient,
+        IDeviceRegistrationService registrations,
         ILocalChangeMonitor localChangeMonitor,
         ILocalStateStore stateStore,
         SyncRuntimeState runtimeState,
@@ -68,6 +71,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         _baselineService = baselineService;
         _selectiveSyncService = selectiveSyncService;
         _syncApiClient = syncApiClient;
+        _registrations = registrations;
         _localChangeMonitor = localChangeMonitor;
         _stateStore = stateStore;
         _runtimeState = runtimeState;
@@ -79,6 +83,12 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         CancellationToken cancellationToken = default)
     {
         _stoppingToken = cancellationToken;
+
+        var initialRegistration = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
+        if (initialRegistration is null || initialRegistration.DeviceId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(initialRegistration.Token))
+            return;
+        _runningDeviceId = initialRegistration.DeviceId;
 
         var savedState = await _stateStore.LoadAsync(
             cancellationToken);
@@ -95,6 +105,11 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
             {
                 try
                 {
+                    // Nunca continuar un motor iniciado con credenciales revocadas
+                    // ni reutilizar su estado para otro dispositivo.
+                    if (!await IsCurrentRegistrationAsync(cancellationToken))
+                        break;
+
                     // Pausar nunca altera selecciones, asociaciones ni archivos.
                     if (File.Exists(PausePath))
                     {
@@ -130,6 +145,9 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                     {
                         if (File.Exists(PausePath))
                             continue;
+
+                        if (!await IsCurrentRegistrationAsync(cancellationToken))
+                            return;
 
                         if (HasConfiguredSelections() && _monitorStarted)
                         {
@@ -230,6 +248,13 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         }
     }
 
+    private async Task<bool> IsCurrentRegistrationAsync(CancellationToken cancellationToken)
+    {
+        var registered = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
+        return registered is not null && registered.DeviceId == _runningDeviceId &&
+               !string.IsNullOrWhiteSpace(registered.Token);
+    }
+
     private static bool HasConfiguredSelections()
     {
         if (!File.Exists(SelectionsPath))
@@ -277,7 +302,8 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
             try
             {
-                if (!_runtimeState.IsOnline || HasConfiguredSelections() || File.Exists(PausePath))
+                if (!_runtimeState.IsOnline || HasConfiguredSelections() || File.Exists(PausePath) ||
+                    !await IsCurrentRegistrationAsync(_stoppingToken))
                     return;
 
                 await _changePushService.PushAsync(
