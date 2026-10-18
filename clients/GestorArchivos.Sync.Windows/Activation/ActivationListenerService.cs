@@ -88,7 +88,8 @@ public sealed class ActivationListenerService : BackgroundService
 
             if (context.Request.HttpMethod == "OPTIONS" &&
                 (context.Request.Url?.AbsolutePath == "/activate" ||
-                 context.Request.Url?.AbsolutePath == "/control"))
+                 context.Request.Url?.AbsolutePath == "/control" ||
+                 context.Request.Url?.AbsolutePath == "/deactivate"))
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NoContent;
@@ -136,6 +137,19 @@ public sealed class ActivationListenerService : BackgroundService
                     context.Response.Close();
                     return;
                 }
+            }
+
+            if (context.Request.Url?.AbsolutePath == "/deactivate" &&
+                context.Request.HttpMethod == "POST")
+            {
+                // El servidor debe revocar primero la credencial. Esta operación
+                // solo borra el registro y token locales; nunca toca archivos.
+                Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
+                await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                await _registrations.ClearRegistrationAsync(cancellationToken);
+                context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                context.Response.Close();
+                return;
             }
 
             if (context.Request.HttpMethod != "POST" ||
