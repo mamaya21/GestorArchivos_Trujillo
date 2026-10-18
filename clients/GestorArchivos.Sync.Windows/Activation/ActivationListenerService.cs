@@ -13,15 +13,18 @@ public sealed class ActivationListenerService : BackgroundService
         "GestorArchivos", "Sync", "paused.flag");
 
     private readonly IActivationService _activationService;
+    private readonly SyncCancellationCoordinator _cancellation;
     private readonly IDeviceRegistrationService _registrations;
     private readonly ILogger<ActivationListenerService> _logger;
 
     public ActivationListenerService(
         IActivationService activationService,
+        SyncCancellationCoordinator cancellation,
         IDeviceRegistrationService registrations,
         ILogger<ActivationListenerService> logger)
     {
         _activationService = activationService;
+        _cancellation = cancellation;
         _registrations = registrations;
         _logger = logger;
     }
@@ -89,7 +92,8 @@ public sealed class ActivationListenerService : BackgroundService
             if (context.Request.HttpMethod == "OPTIONS" &&
                 (context.Request.Url?.AbsolutePath == "/activate" ||
                  context.Request.Url?.AbsolutePath == "/control" ||
-                 context.Request.Url?.AbsolutePath == "/deactivate"))
+                 context.Request.Url?.AbsolutePath == "/deactivate" ||
+                 context.Request.Url?.AbsolutePath == "/quiesce"))
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NoContent;
@@ -139,6 +143,17 @@ public sealed class ActivationListenerService : BackgroundService
                 }
             }
 
+            if (context.Request.Url?.AbsolutePath == "/quiesce" &&
+                context.Request.HttpMethod == "POST")
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
+                await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                await _cancellation.StopAndWaitAsync(cancellationToken);
+                context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                context.Response.Close();
+                return;
+            }
+
             if (context.Request.Url?.AbsolutePath == "/deactivate" &&
                 context.Request.HttpMethod == "POST")
             {
@@ -146,6 +161,7 @@ public sealed class ActivationListenerService : BackgroundService
                 // solo borra el registro y token locales; nunca toca archivos.
                 Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
                 await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                await _cancellation.StopAndWaitAsync(cancellationToken);
                 await _registrations.ClearRegistrationAsync(cancellationToken);
                 context.Response.StatusCode = (int)HttpStatusCode.NoContent;
                 context.Response.Close();
