@@ -93,9 +93,22 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         var savedState = await _stateStore.LoadAsync(
             cancellationToken);
 
-        _runtimeState.LastChangeId = savedState.LastChangeId;
-        _runtimeState.LastSuccessfulSyncUtc = savedState.LastSuccessfulSyncUtc;
-        _runtimeState.IsInitialSyncCompleted = savedState.IsInitialSyncCompleted;
+        // El estado de otro dispositivo (o de una versión sin identidad)
+        // jamás se hereda: evita omitir cambios o asumir un baseline ajeno.
+        if (savedState.DeviceId == _runningDeviceId)
+        {
+            _runtimeState.LastChangeId = savedState.LastChangeId;
+            _runtimeState.LastSuccessfulSyncUtc = savedState.LastSuccessfulSyncUtc;
+            _runtimeState.IsInitialSyncCompleted = savedState.IsInitialSyncCompleted;
+        }
+        else
+        {
+            _runtimeState.LastChangeId = 0;
+            _runtimeState.LastSuccessfulSyncUtc = null;
+            _runtimeState.IsInitialSyncCompleted = false;
+        }
+
+        _runtimeState.DeviceId = _runningDeviceId;
 
         _localChangeMonitor.Changed += OnLocalChanged;
 
