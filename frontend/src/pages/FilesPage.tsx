@@ -1003,8 +1003,24 @@ export default function FilesPage() {
           showCancelButton: true, confirmButtonText: 'Desvincular', cancelButtonText: 'Cancelar',
         })
         if (!confirm.isConfirmed) return
+        // Pausar primero, revocar en el servidor y retirar las credenciales locales.
+        // Ninguna de estas acciones elimina archivos ni carpetas.
+        const pauseResponse = await fetch('http://127.0.0.1:47831/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paused: true }),
+        })
+        if (!pauseResponse.ok) throw new Error('No se pudo pausar el cliente local')
         await apiRequest(`/sync/devices/${linkedHere.deviceId}/unlink`, { method: 'POST' })
-        await Swal.fire({ icon: 'success', title: 'Equipo desvinculado' })
+        const deactivateResponse = await fetch('http://127.0.0.1:47831/deactivate', {
+          method: 'POST',
+        })
+        if (!deactivateResponse.ok) throw new Error('Se revocó el dispositivo remoto, pero no se pudo limpiar el registro local')
+        await Swal.fire({
+          icon: 'success',
+          title: 'Equipo desvinculado de forma segura',
+          text: 'Los archivos locales y remotos se conservaron. Reinicia el servicio Windows antes de activar una sincronización nueva.',
+        })
         return
       }
       if (!result.isConfirmed) return
