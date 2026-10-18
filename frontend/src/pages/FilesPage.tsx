@@ -1121,7 +1121,15 @@ export default function FilesPage() {
         <div className="toolbar-actions">
           <button
             type="button"
-            onClick={() => { window.location.href = 'gestorarchivos-sync://selector' }}
+            onClick={() => void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+              .then(response => {
+                if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
+              })
+              .catch(() => void Swal.fire({
+                icon: 'error',
+                title: 'Selector de Windows no disponible',
+                text: 'Abre una vez el selector de Gestor Archivos desde Windows para iniciar el agente local.',
+              }))}
             title="Abrir el selector de carpetas y archivos de Windows"
           >
             Seleccionar sincronización
