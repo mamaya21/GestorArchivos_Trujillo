@@ -1011,6 +1011,8 @@ export default function FilesPage() {
           body: JSON.stringify({ paused: true }),
         })
         if (!pauseResponse.ok) throw new Error('No se pudo pausar el cliente local')
+        const stopResponse = await fetch('http://127.0.0.1:47831/quiesce', { method: 'POST' })
+        if (!stopResponse.ok) throw new Error('No se pudo detener y confirmar el cierre de las transferencias activas')
         await apiRequest(`/sync/devices/${linkedHere.deviceId}/unlink`, { method: 'POST' })
         const deactivateResponse = await fetch('http://127.0.0.1:47831/deactivate', {
           method: 'POST',
