@@ -9,17 +9,20 @@ public sealed class Worker : BackgroundService
     private readonly ISyncEngine _syncEngine;
     private readonly IActivationService _activationService;
     private readonly SyncLog _log;
+    private readonly SyncCancellationCoordinator _cancellation;
     private readonly ILogger<Worker> _logger;
 
     public Worker(
         ISyncEngine syncEngine,
         IActivationService activationService,
         SyncLog log,
+        SyncCancellationCoordinator cancellation,
         ILogger<Worker> logger)
     {
         _syncEngine = syncEngine;
         _activationService = activationService;
         _log = log;
+        _cancellation = cancellation;
         _logger = logger;
     }
 
@@ -37,11 +40,17 @@ public sealed class Worker : BackgroundService
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
 
-            if (!stoppingToken.IsCancellationRequested)
-                await _syncEngine.RunAsync(stoppingToken);
+            if (!stoppingToken.IsCancellationRequested && !_cancellation.Token.IsCancellationRequested)
+            {
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken, _cancellation.Token);
+                var running = _syncEngine.RunAsync(linked.Token);
+                _cancellation.Track(running);
+                await running;
+            }
         }
         catch (OperationCanceledException)
-            when (stoppingToken.IsCancellationRequested)
+            when (stoppingToken.IsCancellationRequested || _cancellation.Token.IsCancellationRequested)
         {
         }
         catch (Exception ex)
