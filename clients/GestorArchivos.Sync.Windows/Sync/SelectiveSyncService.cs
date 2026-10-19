@@ -18,6 +18,11 @@ public sealed class SelectiveSyncService
     private readonly IConflictService _conflicts;
     private readonly ISyncBaselineStore _baselines;
     private readonly SelectiveSyncMappingService _mapping;
+    private bool _suppressDestructiveOperations;
+
+    private static readonly string SelectionGuardPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "selection-guard.txt");
 
     private static readonly string SelectionsPath = Path.Combine(
         Environment.GetFolderPath(
@@ -49,10 +54,20 @@ public sealed class SelectiveSyncService
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
 
+        var fingerprint = ComputeSelectionFingerprint(selections);
+        var previousFingerprint = File.Exists(SelectionGuardPath)
+            ? await File.ReadAllTextAsync(SelectionGuardPath, cancellationToken)
+            : null;
+        _suppressDestructiveOperations = !string.Equals(
+            previousFingerprint, fingerprint, StringComparison.Ordinal);
+
         // Una selección vacía es válida: el equipo permanece vinculado,
         // pero no se realizan transferencias ni se activa el modo tradicional.
         if (selections.Count == 0)
+        {
+            await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
             return;
+        }
 
         var snapshot = await _api.GetSnapshotAsync(cancellationToken);
 
@@ -115,6 +130,7 @@ public sealed class SelectiveSyncService
         }
 
         await RefreshBaselineAsync(cancellationToken);
+        await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
     }
 
     private async Task SyncSelectedFileAsync(
@@ -552,6 +568,9 @@ public sealed class SelectiveSyncService
         IReadOnlyList<SyncItem> items,
         CancellationToken cancellationToken)
     {
+        if (_suppressDestructiveOperations)
+            return;
+
         var baselines = await _baselines.LoadAsync(cancellationToken);
         foreach (var remote in remoteFiles)
         {
@@ -611,6 +630,9 @@ public sealed class SelectiveSyncService
     IReadOnlyList<SyncItem> items,
     CancellationToken cancellationToken)
     {
+        if (_suppressDestructiveOperations)
+            return;
+
         var baselines = await _baselines.LoadAsync(cancellationToken);
 
         var folderPath = Path.GetFullPath(localFolderPath);
@@ -1027,6 +1049,23 @@ public sealed class SelectiveSyncService
             await SHA256.HashDataAsync(
                 stream,
                 cancellationToken));
+    }
+
+    private static string ComputeSelectionFingerprint(IReadOnlyList<Selection> selections)
+    {
+        var canonical = string.Join("\n", selections
+            .Select(x => $"{x.Kind}:{Path.TrimEndingDirectorySeparator(Path.GetFullPath(x.Path)).Normalize(NormalizationForm.FormC).ToUpperInvariant()}")
+            .OrderBy(x => x, StringComparer.Ordinal));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static async Task SaveSelectionFingerprintAsync(
+        string fingerprint, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(SelectionGuardPath)!);
+        var temporary = SelectionGuardPath + ".tmp";
+        await File.WriteAllTextAsync(temporary, fingerprint, cancellationToken);
+        File.Move(temporary, SelectionGuardPath, true);
     }
 
     private static async Task<List<Selection>> LoadSelectionsAsync(
