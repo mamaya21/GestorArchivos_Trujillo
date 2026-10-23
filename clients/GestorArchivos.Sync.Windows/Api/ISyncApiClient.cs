@@ -30,6 +30,9 @@ public interface ISyncApiClient
         string localPath,
         CancellationToken cancellationToken = default);
 
+    Task TrashSelectedFileAsync(Guid fileId, CancellationToken cancellationToken = default);
+    Task TrashSelectedFolderAsync(Guid folderId, CancellationToken cancellationToken = default);
+
     Task MoveRemoteFileToTrashAsync(
         Guid fileId,
         long expectedVersion,
