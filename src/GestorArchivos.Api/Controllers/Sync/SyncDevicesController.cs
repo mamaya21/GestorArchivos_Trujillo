@@ -38,6 +38,7 @@ public class SyncDevicesController : ControllerBase
                 deviceName = x.Nombre,
                 rootFolderId = x.CarpetaRaizId,
                 rootFolderName = x.CarpetaRaiz.Nombre,
+                rootFolderDeleted = x.CarpetaRaiz.EnPapelera,
                 active = x.Activo,
                 lastConnectionUtc = x.UltimaConexionUtc
             })
@@ -68,6 +69,60 @@ public class SyncDevicesController : ControllerBase
         }
 
         // La carpeta raíz y los elementos remotos se conservan intactos.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    // Solo tras desvincular: retirar la raíz remota de la vista activa sin tocar Windows.
+    // Se conserva en Papelera para recuperación y se impide reusar esta vinculación.
+    [HttpPost("{deviceId:guid}/discard-root")]
+    public async Task<IActionResult> DiscardRoot(Guid deviceId, CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        var device = await _dbContext.DispositivosSync
+            .Include(x => x.CarpetaRaiz)
+            .FirstOrDefaultAsync(x => x.Id == deviceId && x.UsuarioId == userId, cancellationToken);
+        if (device is null) return NotFound();
+        if (device.Activo)
+            return Conflict(new { message = "Primero debe desvincular el equipo." });
+        if (device.CarpetaRaiz.EnPapelera) return NoContent();
+
+        if (await _dbContext.DispositivosSync.AnyAsync(x =>
+            x.Id != deviceId && x.CarpetaRaizId == device.CarpetaRaizId && x.Activo, cancellationToken))
+            return Conflict(new { message = "La carpeta raíz pertenece a otro dispositivo activo." });
+
+        var ids = new HashSet<Guid> { device.CarpetaRaizId };
+        var pending = new List<Guid> { device.CarpetaRaizId };
+        while (pending.Count > 0)
+        {
+            var children = await _dbContext.Carpetas.AsNoTracking()
+                .Where(x => x.CarpetaPadreId.HasValue && pending.Contains(x.CarpetaPadreId.Value) && !x.EnPapelera)
+                .Select(x => x.Id).ToListAsync(cancellationToken);
+            pending = children.Where(ids.Add).ToList();
+        }
+
+        var folders = await _dbContext.Carpetas.Where(x => ids.Contains(x.Id) && !x.EnPapelera)
+            .ToListAsync(cancellationToken);
+        var files = await _dbContext.Archivos
+            .Where(x => ids.Contains(x.CarpetaId) && x.Estado == GestorArchivos.Domain.Entities.EstadoArchivo.Activo)
+            .ToListAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        var batch = Guid.NewGuid();
+        foreach (var folder in folders)
+        {
+            folder.EnPapelera = true;
+            folder.FechaEliminacion = now;
+            folder.FechaModificacion = now;
+            folder.EliminacionLoteId = batch;
+        }
+        foreach (var file in files)
+        {
+            file.Estado = GestorArchivos.Domain.Entities.EstadoArchivo.EnPapelera;
+            file.FechaEliminacion = now;
+            file.FechaModificacion = now;
+            file.EliminacionLoteId = batch;
+            file.Version++;
+        }
         await _dbContext.SaveChangesAsync(cancellationToken);
         return NoContent();
     }
@@ -111,6 +166,9 @@ public class SyncDevicesController : ControllerBase
 
         if (existing?.Activo == true)
             return Conflict(new { message = "El dispositivo seleccionado ya está activo." });
+
+        if (existing is not null && await _dbContext.Carpetas.AnyAsync(x => x.Id == existing.CarpetaRaizId && x.EnPapelera, cancellationToken))
+            return Conflict(new { message = "La raíz anterior fue retirada. Registre una sincronización nueva." });
 
         if (existing is not null)
         {
