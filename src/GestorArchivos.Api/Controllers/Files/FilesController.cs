@@ -659,7 +659,7 @@ public class FilesController : ControllerBase
                 return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
 
             var extension = Path.GetExtension(finalName);
-            var stem = finalName[..^extension.Length];
+            var stem = extension.Length == 0 ? finalName : finalName[..^extension.Length];
             var found = false;
             for (var suffix = 1; suffix <= 10000; suffix++)
             {
