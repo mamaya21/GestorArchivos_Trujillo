@@ -998,21 +998,37 @@ export default function FilesPage() {
         await Swal.fire({ icon: 'info', title: 'Historial de versiones', text: 'Este archivo todavía no tiene versiones anteriores.' })
         return
       }
-      const choices: Record<string, string> = {}
-      for (const version of data.history) {
-        choices[version.id] = `Versión ${version.numero} — ${new Date(version.fechaUtc).toLocaleString()} — ${version.tamanoBytes} bytes`
-      }
+      const formatSize = (bytes: number) => bytes < 1024
+        ? `${bytes} B`
+        : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`
+      const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)
+      const rows = data.history.map((version, index) => {
+        const date = new Date(version.fechaUtc)
+        const displayDate = Number.isNaN(date.getTime()) ? 'Fecha no disponible' : date.toLocaleString('es-PE')
+        return `<label class="ga-version-option">
+          <input type="radio" name="ga-version" value="${escapeHtml(version.id)}" ${index === 0 ? 'checked' : ''} />
+          <span class="ga-version-info"><strong>Versión ${version.numero}</strong><small>${escapeHtml(displayDate)}</small></span>
+          <span class="ga-version-size">${formatSize(version.tamanoBytes)}</span>
+        </label>`
+      }).join('')
       const choice = await Swal.fire({
-        title: `Versiones de ${file.nombre}`,
-        input: 'select',
-        inputOptions: choices,
-        inputPlaceholder: 'Selecciona una versión',
+        title: 'Historial de versiones',
+        text: file.nombre,
+        width: 520,
+        customClass: { popup: 'ga-versions-dialog' },
+        html: `<div class="ga-version-heading"><span>Versión actual: ${data.current}</span><span>${data.history.length} anterior(es)</span></div>
+          <div class="ga-version-list" role="radiogroup" aria-label="Selecciona una versión anterior">${rows}</div>
+          <p class="ga-version-help">Restaurar conserva la versión actual en el historial.</p>`,
         showCancelButton: true,
         showDenyButton: true,
-        confirmButtonText: 'Restaurar versión',
-        denyButtonText: 'Descargar versión',
-        cancelButtonText: 'Cancelar',
-        inputValidator: value => value ? undefined : 'Selecciona una versión.',
+        confirmButtonText: 'Restaurar',
+        denyButtonText: 'Descargar',
+        cancelButtonText: 'Cerrar',
+        confirmButtonColor: '#2563eb',
+        denyButtonColor: '#475569',
+        preConfirm: () => Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-version"]:checked')?.value,
+        preDeny: () => Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-version"]:checked')?.value,
       })
       if (choice.isDismissed || !choice.value) return
       const versionId = String(choice.value)
