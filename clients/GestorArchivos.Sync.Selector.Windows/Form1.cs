@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 
 using System.Text.Json;
 
@@ -34,6 +35,7 @@ public partial class Form1 : Form
         MinimumSize = new Size(650, 420);
         StartPosition = FormStartPosition.CenterScreen;
 
+        Icon = CreateAppIcon();
         BuildInterface();
         LoadSelections();
     }
@@ -81,9 +83,9 @@ public partial class Form1 : Form
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false, AutoScroll = true
         };
-        toolbar.Controls.Add(CreateButton("+  Carpeta", (_, _) => AddFolder(), true));
-        toolbar.Controls.Add(CreateButton("+  Archivos", (_, _) => AddFiles(), true));
-        toolbar.Controls.Add(CreateButton("Quitar selección", (_, _) => RemoveSelection(), false));
+        toolbar.Controls.Add(CreateButton("Carpeta", (_, _) => AddFolder(), true, "folder"));
+        toolbar.Controls.Add(CreateButton("Archivos", (_, _) => AddFiles(), true, "file"));
+        toolbar.Controls.Add(CreateButton("Quitar", (_, _) => RemoveSelection(), false, "remove"));
 
         var listPanel = new Panel
         {
@@ -95,15 +97,40 @@ public partial class Form1 : Form
             using var pen = new Pen(Border);
             e.Graphics.DrawRectangle(pen, 0, 0, listPanel.Width - 1, listPanel.Height - 1);
         };
+        var gridLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1,
+            BackColor = Color.White, Margin = Padding.Empty
+        };
+        gridLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        gridLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var gridHeader = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(248, 249, 253) };
+        gridHeader.Controls.Add(new Label
+        {
+            Text = "ELEMENTO", Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold),
+            ForeColor = Muted, Location = new Point(58, 12), AutoSize = true
+        });
+        gridHeader.Controls.Add(new Label
+        {
+            Text = "ESTADO", Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold),
+            ForeColor = Muted, Anchor = AnchorStyles.Right | AnchorStyles.Top,
+            AutoSize = false, TextAlign = ContentAlignment.MiddleRight,
+            Width = 110, Height = 26
+        });
+        gridHeader.Resize += (_, _) => gridHeader.Controls[1].Left = gridHeader.Width - 132;
         _list.Dock = DockStyle.Fill;
         _list.BorderStyle = BorderStyle.None;
         _list.BackColor = Color.White;
         _list.ForeColor = Ink;
         _list.Font = new Font("Segoe UI", 10);
-        _list.ItemHeight = 30;
+        _list.DrawMode = DrawMode.OwnerDrawFixed;
+        _list.ItemHeight = 54;
         _list.IntegralHeight = false;
-        _list.HorizontalScrollbar = true;
-        listPanel.Controls.Add(_list);
+        _list.HorizontalScrollbar = false;
+        _list.DrawItem += DrawSelectionRow;
+        gridLayout.Controls.Add(gridHeader, 0, 0);
+        gridLayout.Controls.Add(_list, 0, 1);
+        listPanel.Controls.Add(gridLayout);
 
         var footer = new TableLayoutPanel
         {
@@ -114,7 +141,7 @@ public partial class Form1 : Form
         _status.Dock = DockStyle.Fill;
         _status.TextAlign = ContentAlignment.MiddleLeft;
         _status.ForeColor = Muted;
-        var save = CreateButton("Guardar cambios", (_, _) => SaveSelections(), true);
+        var save = CreateButton("Guardar cambios", (_, _) => SaveSelections(), true, "save");
         save.Dock = DockStyle.Fill;
         save.Margin = new Padding(0, 13, 0, 13);
         footer.Controls.Add(_status, 0, 0);
@@ -127,24 +154,130 @@ public partial class Form1 : Form
         Controls.Add(shell);
     }
 
-    private static Button CreateButton(string text, EventHandler handler, bool primary)
+    private static Button CreateButton(string text, EventHandler handler, bool primary, string icon = "")
     {
         var button = new Button
         {
-            Text = text, AutoSize = false,
-            Width = text.Contains("Quitar") ? 148 : 124,
-            Height = 36,
-            Margin = new Padding(0, 4, 10, 4),
-            FlatStyle = FlatStyle.Flat,
-            BackColor = primary ? Accent : Color.White,
+            Text = "    " + text, TextAlign = ContentAlignment.MiddleCenter,
+            Width = text.Contains("Guardar") ? 174 : text.Contains("Quitar") ? 112 : 122,
+            Height = 36, Margin = new Padding(0, 4, 9, 4),
+            FlatStyle = FlatStyle.Flat, BackColor = primary ? Accent : Color.White,
             ForeColor = primary ? Color.White : Ink,
             Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold),
-            Cursor = Cursors.Hand
+            Cursor = Cursors.Hand, UseVisualStyleBackColor = false
         };
-        button.FlatAppearance.BorderSize = primary ? 0 : 1;
-        button.FlatAppearance.BorderColor = Border;
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.MouseOverBackColor = primary
+            ? Color.FromArgb(91, 72, 196) : Color.FromArgb(239, 240, 248);
+        button.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var border = new Pen(primary ? Accent : Border, 1);
+            using var shape = Rounded(e.ClipRectangle.Width - 1, e.ClipRectangle.Height - 1, 8);
+            e.Graphics.DrawPath(border, shape);
+            if (!string.IsNullOrEmpty(icon))
+            {
+                using var pen = new Pen(primary ? Color.White : Accent, 1.8f)
+                { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                var x = Math.Max(12, (button.Width - TextRenderer.MeasureText(text, button.Font).Width) / 2 - 13);
+                var y = button.Height / 2;
+                DrawSymbol(e.Graphics, pen, icon, x, y);
+            }
+        };
         button.Click += handler;
         return button;
+    }
+
+    private static GraphicsPath Rounded(int width, int height, int radius)
+    {
+        var path = new GraphicsPath();
+        var d = radius * 2;
+        path.AddArc(0, 0, d, d, 180, 90);
+        path.AddArc(width - d, 0, d, d, 270, 90);
+        path.AddArc(width - d, height - d, d, d, 0, 90);
+        path.AddArc(0, height - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    private static void DrawSymbol(Graphics g, Pen pen, string symbol, int x, int y)
+    {
+        switch (symbol)
+        {
+            case "folder":
+                g.DrawLines(pen, new[] { new Point(x - 8, y - 4), new Point(x - 3, y - 4),
+                    new Point(x, y - 1), new Point(x + 8, y - 1),
+                    new Point(x + 8, y + 6), new Point(x - 8, y + 6), new Point(x - 8, y - 4) });
+                break;
+            case "file":
+                g.DrawLines(pen, new[] { new Point(x - 6, y - 8), new Point(x + 2, y - 8),
+                    new Point(x + 6, y - 4), new Point(x + 6, y + 8),
+                    new Point(x - 6, y + 8), new Point(x - 6, y - 8) });
+                g.DrawLine(pen, x - 3, y, x + 3, y);
+                break;
+            case "remove":
+                g.DrawLine(pen, x - 6, y, x + 6, y);
+                break;
+            case "save":
+                g.DrawLines(pen, new[] { new Point(x - 6, y), new Point(x - 1, y + 5),
+                    new Point(x + 7, y - 5) });
+                break;
+        }
+    }
+
+    private static Icon CreateAppIcon()
+    {
+        using var bitmap = new Bitmap(64, 64);
+        using (var g = Graphics.FromImage(bitmap))
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var bg = new SolidBrush(Accent);
+            g.FillEllipse(bg, 2, 2, 60, 60);
+            using var pen = new Pen(Color.White, 4.5f)
+            { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            g.DrawArc(pen, 17, 16, 30, 30, 205, 230);
+            g.DrawLines(pen, new[] { new Point(41, 12), new Point(49, 18), new Point(41, 24) });
+            g.DrawArc(pen, 17, 18, 30, 30, 25, 150);
+            g.DrawLines(pen, new[] { new Point(21, 51), new Point(14, 44), new Point(22, 38) });
+        }
+        return Icon.FromHandle(bitmap.GetHicon());
+    }
+
+    private void DrawSelectionRow(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || e.Index >= _selections.Count) return;
+        var selection = _selections[e.Index];
+        var selected = (e.State & DrawItemState.Selected) != 0;
+        var available = selection.Kind == SelectionKind.Folder
+            ? Directory.Exists(selection.Path) : File.Exists(selection.Path);
+        using var background = new SolidBrush(selected
+            ? Color.FromArgb(239, 236, 255) : Color.White);
+        e.Graphics.FillRectangle(background, e.Bounds);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        var x = e.Bounds.Left;
+        var y = e.Bounds.Top;
+        using var iconBackground = new SolidBrush(selection.Kind == SelectionKind.Folder
+            ? Color.FromArgb(237, 231, 255) : Color.FromArgb(231, 242, 255));
+        e.Graphics.FillEllipse(iconBackground, x + 13, y + 10, 34, 34);
+        using var pen = new Pen(selection.Kind == SelectionKind.Folder
+            ? Accent : Color.FromArgb(54, 115, 200), 1.7f);
+        DrawSymbol(e.Graphics, pen,
+            selection.Kind == SelectionKind.Folder ? "folder" : "file", x + 30, y + 27);
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(selection.Path));
+        if (string.IsNullOrWhiteSpace(name)) name = selection.Path;
+        var textWidth = Math.Max(60, e.Bounds.Width - 220);
+        TextRenderer.DrawText(e.Graphics, name, new Font("Segoe UI Semibold", 10, FontStyle.Bold),
+            new Rectangle(x + 60, y + 7, textWidth, 21), Ink,
+            TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(e.Graphics, selection.Path, new Font("Segoe UI", 8.5f),
+            new Rectangle(x + 60, y + 28, textWidth, 18), Muted,
+            TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+        TextRenderer.DrawText(e.Graphics, available ? "Disponible" : "No disponible",
+            new Font("Segoe UI", 9), new Rectangle(e.Bounds.Right - 135, y + 15, 115, 24),
+            available ? Color.FromArgb(30, 128, 90) : Color.FromArgb(190, 79, 75),
+            TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+        using var separator = new Pen(Border);
+        e.Graphics.DrawLine(separator, x + 12, e.Bounds.Bottom - 1, e.Bounds.Right - 12, e.Bounds.Bottom - 1);
     }
 
     private DialogResult AskRemoval(SyncSelection selected)
