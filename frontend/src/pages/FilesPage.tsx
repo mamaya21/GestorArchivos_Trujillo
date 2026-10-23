@@ -520,6 +520,7 @@ export default function FilesPage() {
 }
 
   async function renameFile(file: FileItem) {
+    if (file.selectorManaged) return
     const result = await Swal.fire({
       title: 'Renombrar archivo',
       input: 'text',
@@ -553,6 +554,7 @@ export default function FilesPage() {
   }
 
   async function deleteFile(file: FileItem) {
+    if (file.selectorManaged) return
     const result = await Swal.fire({
       icon: 'warning',
       title: 'Mover a papelera',
@@ -589,7 +591,7 @@ export default function FilesPage() {
   }
 
   function cutSelected() {
-    if (!selectedCount || moving || !currentFolderId || [...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged))) return
+    if (!selectedCount || moving || !currentFolderId || ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged)))) return
     setMoveClipboard({
       folderIds: [...selectedFolders],
       fileIds: [...selectedFiles],
@@ -887,7 +889,7 @@ export default function FilesPage() {
   }
 
   async function deleteSelection(folderIds: string[], fileIds: string[]) {
-    if (folderIds.some(id => folders.some(folder => folder.id === id && folder.selectorManaged))) {
+    if (folderIds.some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || fileIds.some(id => files.some(file => file.id === id && file.selectorManaged))) {
       await Swal.fire({ icon: 'info', title: 'Selección protegida', text: 'Quita primero las carpetas sincronizadas desde el selector.' })
       return
     }
@@ -964,8 +966,9 @@ export default function FilesPage() {
     const folderIds = isSelected ? [...selectedFolders] : folder ? [folder.id] : []
     const fileIds = isSelected ? [...selectedFiles] : file ? [file.id] : []
     const multiple = folderIds.length + fileIds.length > 1
+    if (file?.selectorManaged && (action === 'rename' || action === 'delete' || action === 'cut')) return
     if (folder && (folder.selectorManaged || !folder.carpetaPadreId) && (action === 'rename' || action === 'delete' || action === 'cut')) return
-    if ((action === 'cut' || action === 'delete') && folderIds.some(id => folders.some(item => item.id === id && item.selectorManaged))) return
+    if ((action === 'cut' || action === 'delete') && (folderIds.some(id => folders.some(item => item.id === id && item.selectorManaged)) || fileIds.some(id => files.some(item => item.id === id && item.selectorManaged)))) return
     if (multiple && ['open', 'edit', 'rename'].includes(action)) return
     if (action === 'paste') {
       if (moveClipboard) void moveItems(moveClipboard, currentFolderId)
@@ -1907,7 +1910,7 @@ export default function FilesPage() {
               <>
                 <span className="explorer-selection-count">{selectedCount} seleccionado(s)</span>
                 <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={copySelected}>Copiar</button>
-                <button type="button" disabled={!currentFolderId || moving || !!upload || [...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged))} onClick={cutSelected}>Cortar</button>
+                <button type="button" disabled={!currentFolderId || moving || !!upload || ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged)))} onClick={cutSelected}>Cortar</button>
                 <button type="button" onClick={() => { setSelectedFolders(new Set()); setSelectedFiles(new Set()) }}>Deseleccionar</button>
               </>
             )}
@@ -2183,7 +2186,7 @@ export default function FilesPage() {
               ...(contextMenu.file ? [{ id: 'versions', label: 'Historial de versiones', disabled: selectedCount > 1 && selectedFiles.has(contextMenu.file.id) }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 }] : []),
               ...((contextMenu.file || (contextMenu.folder && contextMenu.folder.carpetaPadreId)) ? [{ id: 'copy', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Copiar selección (${selectedCount})` : 'Copiar' }] : []),
-              ...(currentFolderId ? [{ id: 'cut', disabled: !!contextMenu.folder?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && [...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)), label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
+              ...(currentFolderId ? [{ id: 'cut', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.file?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged))), label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
               ...(!contextMenu.folder || contextMenu.folder.carpetaPadreId ? [
                 { id: 'rename', label: 'Renombrar', disabled: !!contextMenu.folder?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
                 { id: 'delete', disabled: !!contextMenu.folder?.selectorManaged, label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Mover selección a papelera (${selectedCount})` : 'Mover a papelera' },
