@@ -58,7 +58,7 @@ public sealed class SelectiveSyncService
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
         await ProcessRemovalRequestsAsync(selections, cancellationToken);
-        await ProcessRestoreRequestsAsync(selections, cancellationToken);
+
 
         var fingerprint = ComputeSelectionFingerprint(selections);
         var previousFingerprint = File.Exists(SelectionGuardPath)
@@ -110,6 +110,12 @@ public sealed class SelectiveSyncService
             selections, cancellationToken);
 
         await ReconcileRemoteFileRenamesAsync(selections, cancellationToken);
+
+        foreach (var selection in selections.Where(x => x.Kind == 1))
+        {
+            await EnsureStillSelectedAsync(selection.Path, cancellationToken);
+            await _api.RestoreSelectedFolderAsync(selection.Path, cancellationToken);
+        }
 
         await _mapping.PrepareMappingsAsync(cancellationToken);
         await _mapping.CreateMissingFoldersAsync(cancellationToken);
@@ -1864,36 +1870,6 @@ public sealed class SelectiveSyncService
                 cancellationToken);
     }
 
-    private async Task ProcessRestoreRequestsAsync(
-        IReadOnlyList<Selection> selections, CancellationToken cancellationToken)
-    {
-        if (!File.Exists(RestorePath)) return;
-        var pending = JsonSerializer.Deserialize<List<string>>(
-            await File.ReadAllTextAsync(RestorePath, cancellationToken))
-            ?? throw new InvalidOperationException("Solicitudes de restauración inválidas.");
-        foreach (var path in pending.ToArray())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
-                throw new InvalidOperationException("Ruta de restauración inválida.");
-            var fullPath = Path.GetFullPath(path);
-            if (!selections.Any(x => x.Kind == 1 && PathsEqual(x.Path, fullPath)))
-                throw new InvalidOperationException(
-                    $"La carpeta a restaurar no está seleccionada: '{fullPath}'.");
-            if (!Directory.Exists(fullPath))
-                throw new DirectoryNotFoundException(
-                    $"La carpeta local a restaurar no existe: '{fullPath}'.");
-            ValidatePathWithoutLinks(fullPath);
-            await _api.RestoreSelectedFolderAsync(fullPath, cancellationToken);
-            pending.Remove(path);
-            if (pending.Count == 0)
-                File.Delete(RestorePath);
-            else
-                await File.WriteAllTextAsync(RestorePath,
-                    JsonSerializer.Serialize(pending), cancellationToken);
-        }
-    }
-
     private async Task ProcessRemovalRequestsAsync(
         IReadOnlyList<Selection> selections, CancellationToken cancellationToken)
     {
@@ -1935,7 +1911,9 @@ public sealed class SelectiveSyncService
             var item = matches[0];
             try
             {
-                if (request.Kind == 0 && item.ArchivoRemotoId.HasValue)
+                if (request.SendToTrash == false)
+                    await _api.DeleteItemAsync(item.SyncItemId, cancellationToken);
+                else if (request.Kind == 0 && item.ArchivoRemotoId.HasValue)
                     await _api.TrashSelectedFileAsync(item.ArchivoRemotoId.Value, cancellationToken);
                 else if (request.Kind == 1 && item.CarpetaRemotaId.HasValue)
                     await _api.TrashSelectedFolderAsync(item.CarpetaRemotaId.Value, cancellationToken);
@@ -1954,7 +1932,9 @@ public sealed class SelectiveSyncService
             // Si el traslado se confirmó ahora, desactivar también la
             // asociación antigua. La operación exige confirmación de papelera
             // en el servidor y evita conflictos al volver a seleccionar.
-            var remaining = await _api.GetItemsAsync(cancellationToken);
+            var remaining = request.SendToTrash == false
+                ? Array.Empty<SyncItem>()
+                : (await _api.GetItemsAsync(cancellationToken)).ToArray();
             if (remaining.Any(x => x.SyncItemId == item.SyncItemId))
                 await _api.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
 
@@ -1970,6 +1950,7 @@ public sealed class SelectiveSyncService
     {
         public string Path { get; set; } = string.Empty;
         public int Kind { get; set; }
+        public bool? SendToTrash { get; set; }
     }
 
     private sealed class Selection
