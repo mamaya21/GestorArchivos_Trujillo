@@ -33,24 +33,33 @@ public sealed class Worker : BackgroundService
 
         try
         {
-            while (!stoppingToken.IsCancellationRequested &&
-                   !await _activationService.IsActivatedAsync(stoppingToken))
+            while (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogInformation("Esperando activación del dispositivo Sync.");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-            }
+                if (!await _activationService.IsActivatedAsync(stoppingToken))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    continue;
+                }
 
-            if (!stoppingToken.IsCancellationRequested && !_cancellation.Token.IsCancellationRequested)
-            {
+                _cancellation.Reset();
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken, _cancellation.Token);
                 var running = _syncEngine.RunAsync(linked.Token);
                 _cancellation.Track(running);
-                await running;
+                try
+                {
+                    await running;
+                }
+                catch (OperationCanceledException)
+                    when (stoppingToken.IsCancellationRequested || linked.IsCancellationRequested)
+                {
+                }
+
+                if (!stoppingToken.IsCancellationRequested)
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
         }
-        catch (OperationCanceledException)
-            when (stoppingToken.IsCancellationRequested || _cancellation.Token.IsCancellationRequested)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
