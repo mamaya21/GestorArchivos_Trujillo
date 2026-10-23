@@ -1548,8 +1548,8 @@ export default function FilesPage() {
       const result = await Swal.fire({
         title: 'Sincronización',
         html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
-          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : !localState.deviceId || !linkedHere ? 'Desvinculado' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
-          <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular conserva los archivos locales y remotos.</p>`,
+          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Aplicación de sincronización no disponible' : !localState.deviceId || !linkedHere ? 'Desvinculado' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
+          <p style="font-size:13px">Las selecciones se administran desde el selector de sincronización. Desvincular conserva los archivos locales y remotos.</p>`,
         showCancelButton: true,
         showDenyButton: linkedHere !== undefined,
         showConfirmButton: active.length === 0 || linkedHere !== undefined,
@@ -1574,7 +1574,7 @@ export default function FilesPage() {
                 <span><strong>Iniciar desde cero</strong><br><small>Enviar la carpeta web a Papelera y permitir una nueva selección de carpetas.</small></span>
               </label>
             </div>
-            <p style="font-size:12px;color:#64748b">En ambos casos, los archivos locales de Windows se conservan.</p>`,
+            <p style="font-size:12px;color:#64748b">En ambos casos, los archivos locales del equipo se conservan.</p>`,
           didOpen: () => {
             const container = document.getElementById('sync-unlink-options')
             container?.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach(input => {
@@ -1696,20 +1696,20 @@ export default function FilesPage() {
           const selectorResponse = await fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
           selectorOpened = selectorResponse.ok
         } catch {
-          // El agente del selector puede no estar abierto en la sesión Windows.
+          // El agente del selector puede no estar disponible en este equipo.
         }
         if (!selectorOpened) {
           await Swal.fire({
             icon: 'warning',
             title: 'Dispositivo registrado; falta elegir carpetas',
-            text: 'No se pudo abrir el selector de Windows. Inicia GestorArchivos.Sync.Selector.Windows en este equipo y abre el selector desde su icono en la bandeja. No se ha confirmado la selección de carpetas.',
+            text: 'No se pudo abrir el selector de sincronización. Abre la aplicación de sincronización de este equipo y vuelve a intentarlo. No se ha confirmado la selección de carpetas.',
           })
           return
         }
         await Swal.fire({
           icon: 'success',
           title: 'Dispositivo registrado',
-          text: 'Se abrió el selector de Windows. Revisa y guarda las carpetas y archivos que deseas sincronizar.',
+          text: 'Se abrió el selector de sincronización. Revisa y guarda las carpetas y archivos que deseas sincronizar.',
         })
         return
       }
@@ -1823,8 +1823,8 @@ export default function FilesPage() {
                     })
                     .catch(() => void Swal.fire({
                       icon: 'error',
-                      title: 'Selector de Windows no disponible',
-                      text: 'Abre una vez el selector de Gestor Archivos desde Windows para iniciar el agente local.',
+                      title: 'Selector de sincronización no disponible',
+                      text: 'Abre la aplicación de sincronización de Gestor de Archivos en este equipo e inténtalo nuevamente.',
                     }))
                 }}
               >Seleccionar sincronización</button>}
