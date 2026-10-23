@@ -257,13 +257,29 @@ public class UploadsController : ControllerBase
                 var existingLength =
                     new FileInfo(chunkPath).Length;
 
-                if (existingLength == expectedLength)
-                    return NoContent();
+                if (existingLength != expectedLength)
+                    return Conflict(new
+                    {
+                        message = "Existe un fragmento inválido con ese índice."
+                    });
 
-                return Conflict(new
-                {
-                    message = "Existe un fragmento inválido con ese índice."
-                });
+                // Un reintento debe contener exactamente los mismos bytes.
+                // Igual tamaño no implica igual contenido.
+                await using var existingStream = System.IO.File.OpenRead(chunkPath);
+                using var existingHash = SHA256.Create();
+                var storedHash = await existingHash.ComputeHashAsync(
+                    existingStream, cancellationToken);
+                using var incomingHash = SHA256.Create();
+                var receivedHash = await incomingHash.ComputeHashAsync(
+                    Request.Body, cancellationToken);
+
+                if (!CryptographicOperations.FixedTimeEquals(storedHash, receivedHash))
+                    return Conflict(new
+                    {
+                        message = "El fragmento reenviado tiene contenido diferente."
+                    });
+
+                return NoContent();
             }
 
             try
