@@ -1532,7 +1532,7 @@ export default function FilesPage() {
       const result = await Swal.fire({
         title: 'Sincronización',
         html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
-          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
+          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Cliente Windows no disponible' : !localState.deviceId || !linkedHere ? 'Desvinculado' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
           <p style="font-size:13px">Las selecciones se administran desde el selector de Windows. Desvincular conserva los archivos locales y remotos.</p>`,
         showCancelButton: true,
         showDenyButton: linkedHere !== undefined,
