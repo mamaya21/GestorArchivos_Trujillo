@@ -722,8 +722,8 @@ export default function FilesPage() {
     }
   }
 
-  async function downloadSelection(fileIds: string[]) {
-    if (fileIds.length === 1) {
+  async function downloadSelection(fileIds: string[], folderIds: string[] = []) {
+    if (fileIds.length === 1 && folderIds.length === 0) {
       const file = files.find(item => item.id === fileIds[0])
       if (file) downloadFile(file)
       return
@@ -732,7 +732,7 @@ export default function FilesPage() {
       const response = await apiRaw('/files/download-zip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileIds }),
+        body: JSON.stringify({ fileIds, folderIds }),
       })
       if (!response.ok) throw new Error(await response.text())
       const url = URL.createObjectURL(await response.blob())
@@ -836,7 +836,7 @@ export default function FilesPage() {
       if (file) openFile(file)
       else if (folder) openFolder(folder)
     }
-    if (action === 'download' && fileIds.length && !folderIds.length) void downloadSelection(fileIds)
+    if (action === 'download' && (fileIds.length || folderIds.length)) void downloadSelection(fileIds, folderIds)
     if (action === 'edit' && file) void editTextFile(file)
     if (action === 'rename') {
       if (file) void renameFile(file)
@@ -1848,7 +1848,7 @@ export default function FilesPage() {
             ? [{ id: 'paste', label: 'Pegar', disabled: (!moveClipboard && !copyClipboard) || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'new-text-file', label: 'Nuevo archivo .txt', disabled: !currentFolderId }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
             : [
               { id: 'open', label: 'Abrir', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
-              ...(contextMenu.file ? [{ id: 'download', label: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 ? 'Descargar ZIP' : 'Descargar', disabled: selectedFolders.size > 0 && selectedFiles.has(contextMenu.file!.id) || selectedFiles.has(contextMenu.file!.id) && selectedFiles.size > 100 }] : []),
+              ...((contextMenu.file || contextMenu.folder) ? [{ id: 'download', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 || !!contextMenu.folder ? 'Descargar ZIP' : 'Descargar', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 100 }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 }] : []),
               ...(contextMenu.file ? [{ id: 'copy', label: selectedFiles.has(contextMenu.file!.id) && selectedFiles.size > 1 ? `Copiar selección (${selectedFiles.size})` : 'Copiar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedFolders.size > 0 }] : []),
               ...(currentFolderId ? [{ id: 'cut', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
