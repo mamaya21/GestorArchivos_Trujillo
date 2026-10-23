@@ -30,6 +30,10 @@ public sealed class SelectiveSyncService
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "selection-guard.txt");
 
+    private static readonly string RootRenameApprovalPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "root-rename-approval.json");
+
     private static readonly string RootIdentityPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "root-identities.json");
@@ -334,6 +338,27 @@ public sealed class SelectiveSyncService
                     }
                 }
             }
+            if (verified.Count > 1 && File.Exists(RootRenameApprovalPath))
+            {
+                // Explicit, one-use operator approval. The destination must still
+                // pass the complete identity/content verification above.
+                using var approval = JsonDocument.Parse(
+                    await File.ReadAllTextAsync(RootRenameApprovalPath, cancellationToken));
+                var approvedOld = approval.RootElement.TryGetProperty("OldPath", out var op)
+                    ? op.GetString() : null;
+                var approvedNew = approval.RootElement.TryGetProperty("NewPath", out var np)
+                    ? np.GetString() : null;
+                if (approvedOld is not null && approvedNew is not null &&
+                    PathsEqual(approvedOld, oldPath))
+                {
+                    var matching = verified.Where(x => PathsEqual(x, approvedNew)).ToList();
+                    if (matching.Count == 1)
+                    {
+                        verified = matching;
+                        Console.WriteLine($"[SyncRename] Aprobación explícita verificada: {approvedNew}");
+                    }
+                }
+            }
             if (verified.Count != 1)
             {
                 Console.WriteLine($"[SyncRename] Sin coincidencia única para '{oldPath}': " +
@@ -382,6 +407,15 @@ public sealed class SelectiveSyncService
                     : Path.Combine(destination, Path.GetRelativePath(oldPath, baseline.LocalPath));
             await _baselines.SaveAsync(updatedBaselines, cancellationToken);
             selection.Path = destination;
+            if (File.Exists(RootRenameApprovalPath))
+            {
+                using var approval = JsonDocument.Parse(
+                    await File.ReadAllTextAsync(RootRenameApprovalPath, cancellationToken));
+                if (approval.RootElement.TryGetProperty("OldPath", out var approvedOld) &&
+                    approvedOld.GetString() is string approvedPath &&
+                    PathsEqual(approvedPath, oldPath))
+                    File.Delete(RootRenameApprovalPath);
+            }
             if (rootIdentities.Remove(oldPath)) identitiesChanged = true;
             var destinationIdentity = WindowsFileIdentity.TryGet(destination, selection.Kind == 1);
             if (destinationIdentity is not null)
