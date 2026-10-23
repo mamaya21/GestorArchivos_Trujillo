@@ -513,7 +513,7 @@ export default function FilesPage() {
   }
 
   function cutSelected() {
-    if (!selectedCount || moving) return
+    if (!selectedCount || moving || !currentFolderId) return
     setMoveClipboard({
       folderIds: [...selectedFolders],
       fileIds: [...selectedFiles],
@@ -522,8 +522,37 @@ export default function FilesPage() {
     setMessage('Elementos cortados. Abre la carpeta de destino y selecciona Pegar.')
   }
 
+  async function findFolderRoot(folderId: string): Promise<string | null> {
+    const visited = new Set<string>()
+    let current: string | null = folderId
+    while (current && !visited.has(current)) {
+      visited.add(current)
+      const folder: Folder = await apiRequest<Folder>(`/folders/${current}`)
+      if (!folder.carpetaPadreId) return folder.id
+      current = folder.carpetaPadreId
+    }
+    return null
+  }
+
   async function moveItems(clipboard: MoveClipboard, destinationFolderId: string | null) {
     if (!destinationFolderId || moving || upload) return
+    if (!clipboard.sourceFolderId) {
+      await Swal.fire({ icon: 'warning', title: 'Raíz protegida', text: 'No puedes mover una carpeta raíz.' })
+      return
+    }
+    try {
+      const [sourceRoot, destinationRoot] = await Promise.all([
+        findFolderRoot(clipboard.sourceFolderId),
+        findFolderRoot(destinationFolderId),
+      ])
+      if (!sourceRoot || sourceRoot !== destinationRoot) {
+        await Swal.fire({ icon: 'warning', title: 'Movimiento bloqueado', text: 'Solo puedes mover elementos dentro de la misma raíz.' })
+        return
+      }
+    } catch (error) {
+      await showFileError(error)
+      return
+    }
     if (clipboard.sourceFolderId === destinationFolderId) {
       setMoveClipboard(null)
       return
@@ -570,6 +599,7 @@ export default function FilesPage() {
   }
 
   function handleInternalDragStart(event: DragEvent<HTMLDivElement>, kind: 'file' | 'folder', id: string) {
+    if (!currentFolderId) { event.preventDefault(); return }
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('application/x-gestorarchivos-item', JSON.stringify({ kind, id }))
     setDraggedItem({ kind, id })
@@ -673,6 +703,7 @@ export default function FilesPage() {
       setMoveClipboard(null)
     }
     if (action === 'cut') {
+      if (!currentFolderId) return
       setCopyClipboard(null)
       setMoveClipboard({
         folderIds: folder ? [folder.id] : [],
@@ -1395,7 +1426,7 @@ export default function FilesPage() {
               {selectedCount} seleccionado(s)
             </strong>
 
-            <button type="button" disabled={moving || !!upload} onClick={cutSelected}>Cortar selección</button>
+            <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={cutSelected}>Cortar selección</button>
           </div>
         )}
       </div>
@@ -1542,7 +1573,7 @@ export default function FilesPage() {
                 key={folder.id}
                 onContextMenu={(event) => showContextMenu(event, 'folder', undefined, folder)}
                 {...touchMenu('folder', undefined, folder)}
-                draggable={!moving && !upload}
+                draggable={!!currentFolderId && !moving && !upload}
                 onDragStart={(event) => handleInternalDragStart(event, 'folder', folder.id)}
                 onDragOver={(event) => { if (draggedItem) { event.preventDefault(); event.stopPropagation() } }}
                 onDrop={(event) => { handleInternalDrop(event, folder.id) }}
@@ -1667,7 +1698,7 @@ export default function FilesPage() {
               ...(contextMenu.file ? [{ id: 'download', label: 'Descargar' }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar' }] : []),
               ...(contextMenu.file ? [{ id: 'copy', label: 'Copiar' }] : []),
-              { id: 'cut', label: 'Cortar' },
+              ...(currentFolderId ? [{ id: 'cut', label: 'Cortar' }] : []),
               { id: 'rename', label: 'Renombrar' },
               { id: 'delete', label: 'Mover a papelera' },
             ]).map((item) => (
