@@ -123,6 +123,20 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                     if (!await IsCurrentRegistrationAsync(cancellationToken))
                         break;
 
+                    // Una activación desde cero requiere confirmar selecciones nuevas.
+                    if (File.Exists(Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                        "GestorArchivos", "Sync", "selection-pending.flag")))
+                    {
+                        if (_monitorStarted)
+                        {
+                            _localChangeMonitor.Stop();
+                            _monitorStarted = false;
+                        }
+                        await DelayAsync(cancellationToken);
+                        continue;
+                    }
+
                     // Pausar nunca altera selecciones, asociaciones ni archivos.
                     if (File.Exists(PausePath))
                     {
