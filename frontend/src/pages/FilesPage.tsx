@@ -684,19 +684,24 @@ export default function FilesPage() {
               title: 'Nombre duplicado',
               text: `Ya existe "${source.nombre}" en el destino. ¿Qué deseas hacer?`,
               showCancelButton: true,
-              showDenyButton: true,
-              confirmButtonText: 'Aplicar',
-              input: 'radio',
-              inputOptions: item.kind === 'files' ? { keepBoth: 'Conservar ambos', replace: 'Reemplazar (guardar versión anterior)', skip: 'Omitir' } : { keepBoth: 'Conservar ambos', skip: 'Omitir' },
-              inputValue: 'keepBoth',
-              denyButtonText: 'Omitir',
+              confirmButtonText: 'Continuar',
               cancelButtonText: 'Cancelar operación',
-              html: '<label><input type="checkbox" id="move-all" /> Aplicar a todos</label>',
-              preConfirm: value => ({ resolution: value, all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#move-all')?.checked) }),
+              confirmButtonColor: '#2563eb',
+              width: 480,
+              customClass: { popup: 'ga-conflict-dialog' },
+              html: `<div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Crear una copia con un nombre diferente.</small></span></label>
+                ${item.kind === 'files' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No modificar este elemento y continuar.</small></span></label>
+              </div><label class="ga-conflict-apply"><input type="checkbox" id="move-all" /> Aplicar a todos los conflictos</label>`,
+              preConfirm: () => ({
+                resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
+                all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#move-all')?.checked),
+              }),
             })
             if (choice.isDismissed) break
             const selected = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; all: boolean } | undefined
-            resolution = choice.isDenied ? 'skip' : (selected?.resolution ?? 'keepBoth')
+            resolution = selected?.resolution ?? 'keepBoth'
             if (selected?.all) applyToAll = resolution
           }
         }
@@ -799,24 +804,26 @@ export default function FilesPage() {
               icon: 'warning',
               title: 'Nombre duplicado',
               text: `Ya existe "${source.nombre}" en la carpeta de destino. ¿Qué deseas hacer?`,
-              showDenyButton: true,
-              footer: 'Para reemplazar, selecciona la opción Reemplazar en el selector.',
-              input: 'radio',
-              inputOptions: { keepBoth: 'Conservar ambos', replace: 'Reemplazar (guardar versión anterior)', skip: 'Omitir' },
-              inputValue: 'keepBoth',
               showCancelButton: true,
-              confirmButtonText: 'Aplicar',
-              denyButtonText: 'Omitir',
+              confirmButtonText: 'Continuar',
               cancelButtonText: 'Cancelar operación',
-              html: '<label><input type="checkbox" id="copy-conflict-all" /> Aplicar a todos los conflictos</label>',
-              preConfirm: (value) => ({
-                resolution: value as 'skip' | 'keepBoth' | 'replace',
+              confirmButtonColor: '#2563eb',
+              width: 480,
+              customClass: { popup: 'ga-conflict-dialog' },
+              html: `<div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Crear una copia con un nombre diferente.</small></span></label>
+                ${entry.kind === 'files' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No modificar este elemento y continuar.</small></span></label>
+              </div><label class="ga-conflict-apply"><input type="checkbox" id="copy-conflict-all" /> Aplicar a todos los conflictos</label>`,
+              preConfirm: () => ({
+                resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
                 applyToAll: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#copy-conflict-all')?.checked),
               }),
+            }),
             })
             if (choice.isDismissed) break
             const selection = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; applyToAll: boolean } | undefined
-            resolution = choice.isDenied ? 'skip' : (selection?.resolution ?? 'keepBoth')
+            resolution = selection?.resolution ?? 'keepBoth'
             if (selection?.applyToAll) applyToAll = resolution
           }
           result = await apiRequest('/files/copy-selection', {
