@@ -121,6 +121,13 @@ public sealed class SyncApiClient : ISyncApiClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public async Task DetachTrashedItemAsync(Guid syncItemId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PostAsync(
+            $"api/sync/items/{syncItemId}/detach-if-trashed", null, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     public async Task TrashSelectedFileAsync(Guid fileId, CancellationToken cancellationToken = default)
     {
         using var response = await _httpClient.DeleteAsync($"api/sync/files/{fileId}", cancellationToken);
