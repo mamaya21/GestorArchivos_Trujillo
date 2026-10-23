@@ -1108,10 +1108,10 @@ public sealed class SelectiveSyncService
                         if (HashesEqual(await HashLocalAsync(candidate, cancellationToken),
                                 remoteFile.HashSha256))
                         {
-                            var newName = Path.GetFileName(candidate);
-                            ValidateRemoteName(newName);
+                            var recoveredName = Path.GetFileName(candidate);
+                            ValidateRemoteName(recoveredName);
                             await _api.RenameRemoteFileAsync(remoteFile.Id,
-                                newName, cancellationToken);
+                                recoveredName, cancellationToken);
                             await _api.UpdateItemPathAsync(item.SyncItemId,
                                 candidate, cancellationToken);
                             candidates.Remove(candidate);
