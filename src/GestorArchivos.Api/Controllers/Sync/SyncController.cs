@@ -573,10 +573,27 @@ public class SyncController : ControllerBase
             .ToListAsync(cancellationToken);
         if (candidates.Count == 0)
             return NoContent();
-        if (candidates.Count != 1)
-            return Conflict(new { message = "Existen varias carpetas eliminadas con ese nombre. Se requiere resolver el conflicto." });
 
-        var root = candidates[0];
+        // Nunca escoger una carpeta por nombre cuando hay varias copias en
+        // papelera. La asociación histórica de la ruta local es la identidad
+        // verificable; las demás copias permanecen intactas.
+        Carpeta root;
+        if (candidates.Count == 1)
+        {
+            root = candidates[0];
+            if (existing is not null && existing.CarpetaRemotaId.HasValue &&
+                existing.CarpetaRemotaId.Value != root.Id)
+                return Conflict(new { message = "La carpeta eliminada no coincide con la asociación histórica de esta ruta." });
+        }
+        else
+        {
+            if (existing?.CarpetaRemotaId is not Guid previousId)
+                return Conflict(new { message = "Hay varias carpetas eliminadas con ese nombre y no existe una asociación histórica verificable. No se restaurará ninguna automáticamente." });
+            var matching = candidates.Where(x => x.Id == previousId).ToList();
+            if (matching.Count != 1)
+                return Conflict(new { message = "Ninguna carpeta eliminada coincide con la identidad sincronizada anteriormente." });
+            root = matching[0];
+        }
         if (!root.EliminacionLoteId.HasValue)
             return Conflict(new { message = "Esta eliminación antigua no tiene un lote verificable." });
         if (!await _permissionService.HasPermissionIncludingTrashAsync(
