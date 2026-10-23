@@ -104,7 +104,7 @@ export default function TrashPage() {
     const failedKeys: string[] = []
     let succeeded = 0
     let skipped = 0
-    let applyToAll: 'skip' | 'keepBoth' | null = null
+    let applyToAll: 'skip' | 'keepBoth' | 'replace' | null = null
 
     // Reintentar carpetas pendientes cuando la restauración de su padre
     // permita completar una operación posterior.
@@ -127,7 +127,7 @@ export default function TrashPage() {
           } catch (err) {
             if (action === 'restore' && err instanceof ApiError && err.status === 409 &&
                 /mismo nombre|ese nombre/i.test(err.message)) {
-              let resolution: 'skip' | 'keepBoth' | null = applyToAll
+              let resolution: 'skip' | 'keepBoth' | 'replace' | null = applyToAll === 'replace' && item.type === 'folder' ? null : applyToAll
               if (!resolution) {
                 const choice = await Swal.fire({
                   icon: 'warning',
@@ -135,19 +135,27 @@ export default function TrashPage() {
                   text: `Ya existe un elemento llamado "${item.nombre}".`,
                   showCancelButton: true,
                   showDenyButton: true,
-                  confirmButtonText: 'Conservar ambos',
+                  confirmButtonText: 'Aplicar',
                   denyButtonText: 'Omitir',
-                  cancelButtonText: 'Cancelar',
-                  input: 'checkbox',
-                  inputPlaceholder: 'Aplicar a todos',
+                  cancelButtonText: 'Cancelar operación',
+                  input: 'radio',
+                  inputOptions: item.type === 'file'
+                    ? { keepBoth: 'Conservar ambos', replace: 'Reemplazar (guardar versión anterior)', skip: 'Omitir' }
+                    : { keepBoth: 'Conservar ambos', skip: 'Omitir' },
+                  inputValue: 'keepBoth',
+                  html: '<label><input type="checkbox" id="trash-all" /> Aplicar a todos</label>',
+                  preConfirm: value => ({
+                    resolution: value,
+                    all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#trash-all')?.checked),
+                  }),
                 })
                 if (choice.isDismissed) {
-                  failedKeys.push(itemKey(item))
-                  failed.push(`${item.nombre}: restauración cancelada.`)
-                  continue
+                  setNotice(`${succeeded} restaurado(s) antes de cancelar.`)
+                  return
                 }
-                resolution = choice.isConfirmed ? 'keepBoth' : 'skip'
-                if (choice.value === 1 || choice.value === '1') applyToAll = resolution
+                const selected = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; all: boolean } | undefined
+                resolution = choice.isDenied ? 'skip' : (selected?.resolution ?? 'keepBoth')
+                if (selected?.all) applyToAll = resolution
               }
               try {
                 const response = await apiRequest<{ skipped?: boolean } | undefined>(
