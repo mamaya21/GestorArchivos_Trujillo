@@ -9,7 +9,6 @@ public partial class Form1 : Form
     private readonly ListBox _list = new();
     private readonly Label _status = new();
     private readonly List<RemovalRequest> _removals = new();
-    private static readonly string RemovalPath = Path.Combine(Path.GetDirectoryName(SharedConfigPath)!, "removal-requests.json");
 
     private static readonly string ConfigPath = Path.Combine(
         Environment.GetFolderPath(
@@ -24,6 +23,8 @@ public partial class Form1 : Form
         "GestorArchivos",
         "Sync",
         "selections.json");
+
+    private static readonly string RemovalPath = Path.Combine(Path.GetDirectoryName(SharedConfigPath)!, "removal-requests.json");
 
     public Form1()
     {
