@@ -1083,9 +1083,16 @@ public sealed class SelectiveSyncService
 
             if (existingMapping is not null)
             {
-                throw new InvalidOperationException(
-                    $"Se bloqueó la recreación de '{localFile.Value}'. " +
-                    "El archivo ya tiene una asociación remota registrada.");
+                if (existingMapping.Tipo != SyncItemType.File ||
+                    !existingMapping.ArchivoRemotoId.HasValue)
+                    throw new InvalidOperationException(
+                        $"La asociación de '{localFile.Value}' tiene un tipo incompatible.");
+
+                // Nunca reemplazar archivos remotos activos o movidos.
+                // El servidor solo desasocia si el archivo anterior está
+                // confirmado en la papelera.
+                await _api.DetachTrashedItemAsync(
+                    existingMapping.SyncItemId, cancellationToken);
             }
 
             ValidatePathWithoutLinks(localFile.Value);
