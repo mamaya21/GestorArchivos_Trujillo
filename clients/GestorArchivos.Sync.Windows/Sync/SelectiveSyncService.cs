@@ -438,7 +438,14 @@ public sealed class SelectiveSyncService
                 }
 
                 if (matches.Count == 0)
-                    continue;
+                {
+                    // Una desaparición no demostrada no es autorización
+                    // para enviar el objeto remoto a la papelera.
+                    throw new InvalidOperationException(
+                        $"No se pudo verificar si '{item.RutaLocal}' fue " +
+                        "eliminado o movido. Sincronización bloqueada " +
+                        "para proteger el archivo remoto.");
+                }
                 if (matches.Count != 1)
                     throw new InvalidOperationException(
                         $"Movimiento ambiguo de '{item.RutaLocal}': " +
