@@ -805,11 +805,16 @@ export default function FilesPage() {
               confirmButtonText: 'Aplicar',
               denyButtonText: 'Omitir',
               cancelButtonText: 'Cancelar operación',
-              showLoaderOnConfirm: false,
-
+              html: '<label><input type="checkbox" id="copy-conflict-all" /> Aplicar a todos los conflictos</label>',
+              preConfirm: (value) => ({
+                resolution: value as 'skip' | 'keepBoth' | 'replace',
+                applyToAll: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#copy-conflict-all')?.checked),
+              }),
             })
             if (choice.isDismissed) break
-            resolution = choice.isDenied ? 'skip' : (choice.value as 'skip' | 'keepBoth' | 'replace')
+            const selection = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; applyToAll: boolean } | undefined
+            resolution = choice.isDenied ? 'skip' : (selection?.resolution ?? 'keepBoth')
+            if (selection?.applyToAll) applyToAll = resolution
           }
           result = await apiRequest('/files/copy-selection', {
             method: 'POST',
