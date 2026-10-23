@@ -2129,3 +2129,91 @@ button:disabled {
 .ga-conflict-item-label { color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .045em; }
 .ga-conflict-item-name { color: #0f172a; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
 .ga-conflict-item-hint { color: #64748b; font-size: 12px; }
+
+
+/* Compact file explorer navigation and actions */
+.file-manager .toolbar > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 18px 10px;
+}
+.file-manager .toolbar h1 {
+  order: -1;
+  font-size: 18px;
+  line-height: 1.25;
+  margin: 0 0 3px;
+}
+.file-manager .file-location-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.file-manager .file-location-row .folder-navigation {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+.file-manager .file-location-row .breadcrumbs {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 5px;
+  font-size: 13px;
+}
+.file-manager .file-location-row .breadcrumbs button {
+  font-size: 13px;
+}
+.file-manager .toolbar-actions {
+  padding: 9px 18px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.file-manager .file-header-search {
+  flex: 1 1 240px;
+  min-width: 180px;
+  max-width: 420px;
+  margin-left: auto;
+}
+.file-manager .file-header-search .search-box {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 12px;
+  background: #fff;
+}
+.file-manager .file-sync-dropdown { margin-left: 0; }
+.file-manager .explorer-tools {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+}
+.file-manager .explorer-tools:empty { display: none; }
+.file-manager .file-drop-hint {
+  margin: 3px 0 7px;
+  padding: 0 4px;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #94a3b8;
+}
+.file-manager .toolbar { margin-bottom: 8px; }
+@media (max-width: 900px) {
+  .file-manager .file-header-search {
+    order: 3;
+    flex: 1 1 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+  .file-manager .file-sync-dropdown { margin-left: auto; }
+}
+@media (max-width: 540px) {
+  .file-manager .toolbar > div:first-child { padding: 12px; }
+  .file-manager .toolbar-actions { padding: 9px 12px; }
+  .file-manager .file-location-row { gap: 7px; }
+  .file-manager .file-location-row .breadcrumbs { font-size: 12px; }
+  .file-manager .file-drop-hint { text-align: left; }
+}
