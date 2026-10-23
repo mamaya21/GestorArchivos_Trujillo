@@ -307,7 +307,9 @@ public class FoldersController : ControllerBase
         if (folder is null)
             return NotFound();
 
-        if (!folder.CarpetaPadreId.HasValue)
+        var isDeviceContainer = await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.CarpetaRaizId == id, cancellationToken);
+        if (!folder.CarpetaPadreId.HasValue && !isDeviceContainer)
             return BadRequest(new { message = "No se puede renombrar una carpeta raíz protegida." });
 
         if (await IsSelectorManagedRootAsync(id, cancellationToken))
