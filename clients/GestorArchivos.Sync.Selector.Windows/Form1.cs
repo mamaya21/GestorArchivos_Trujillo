@@ -25,7 +25,7 @@ public partial class Form1 : Form
 
     public Form1()
     {
-        Text = "Gestor de Archivos - SelecciÛn de sincronizaciÛn";
+        Text = "Gestor de Archivos - Selecci√≥n de sincronizaci√≥n";
         Width = 850;
         Height = 540;
         MinimumSize = new Size(650, 420);
@@ -52,7 +52,7 @@ public partial class Form1 : Form
 
         var title = new Label
         {
-            Text = "Selecciona quÈ deseas sincronizar",
+            Text = "Selecciona qu√© deseas sincronizar",
             Dock = DockStyle.Fill,
             Font = new Font(Font.FontFamily, 14, FontStyle.Bold),
             TextAlign = ContentAlignment.MiddleLeft
@@ -75,7 +75,7 @@ public partial class Form1 : Form
             (_, _) => AddFiles()));
 
         toolbar.Controls.Add(CreateButton(
-            "Quitar selecciÛn",
+            "Quitar selecci√≥n",
             (_, _) => RemoveSelection()));
 
         _list.Dock = DockStyle.Fill;
@@ -101,7 +101,7 @@ public partial class Form1 : Form
         _status.TextAlign = ContentAlignment.MiddleLeft;
 
         var save = CreateButton(
-            "Guardar selecciÛn",
+            "Guardar selecci√≥n",
             (_, _) => SaveSelections());
 
         save.Dock = DockStyle.Fill;
@@ -138,7 +138,7 @@ public partial class Form1 : Form
         using var dialog = new FolderBrowserDialog
         {
             Description =
-                "Selecciona una carpeta. Se incluir·n todos sus archivos y subcarpetas.",
+                "Selecciona una carpeta. Se incluir√°n todos sus archivos y subcarpetas.",
             ShowNewFolderButton = false,
             UseDescriptionForTitle = true
         };
@@ -198,7 +198,7 @@ public partial class Form1 : Form
             if (validateExistence)
             {
                 MessageBox.Show(
-                    "La ruta seleccionada no es v·lida.",
+                    "La ruta seleccionada no es v√°lida.",
                     "Gestor de Archivos",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -216,7 +216,7 @@ public partial class Form1 : Form
             if (!exists)
             {
                 MessageBox.Show(
-                    "La ubicaciÛn seleccionada no existe o no est· disponible.",
+                    "La ubicaci√≥n seleccionada no existe o no est√° disponible.",
                     "Gestor de Archivos",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -335,14 +335,21 @@ public partial class Form1 : Form
                     WriteIndented = true
                 });
 
-            // Guardar primero la configuraciÛn compartida.
+            // Guardar primero la configuraci√≥n compartida.
             // Si falla, no informar que el servicio
-            // ya recibiÛ la nueva selecciÛn.
+            // ya recibi√≥ la nueva selecci√≥n.
             WriteAtomically(SharedConfigPath, json);
 
-            // Conservar tambiÈn la configuraciÛn
+            // Conservar tambi√©n la configuraci√≥n
             // del usuario interactivo.
             WriteAtomically(ConfigPath, json);
+
+            // Solo la confirmaci√≥n de una selecci√≥n nueva habilita el motor.
+            var pendingPath = Path.Combine(
+                Path.GetDirectoryName(SharedConfigPath)!,
+                "selection-pending.flag");
+            if (File.Exists(pendingPath))
+                File.Delete(pendingPath);
 
             MessageBox.Show(
                 "Selecciones guardadas correctamente.",
@@ -353,7 +360,7 @@ public partial class Form1 : Form
         catch (UnauthorizedAccessException)
         {
             MessageBox.Show(
-                "No se pudo guardar la configuraciÛn compartida. " +
+                "No se pudo guardar la configuraci√≥n compartida. " +
                 "Verifica los permisos de escritura en " +
                 @"C:\ProgramData\GestorArchivos\Sync.",
                 "Permisos insuficientes",
@@ -376,7 +383,7 @@ public partial class Form1 : Form
     {
         var directory = Path.GetDirectoryName(path)
             ?? throw new InvalidOperationException(
-                "No se pudo determinar el directorio de configuraciÛn.");
+                "No se pudo determinar el directorio de configuraci√≥n.");
 
         Directory.CreateDirectory(directory);
 
@@ -401,7 +408,7 @@ public partial class Form1 : Form
 
     private void LoadSelections()
     {
-        // La configuraciÛn compartida tiene prioridad
+        // La configuraci√≥n compartida tiene prioridad
         // cuando ya existe.
         var path = File.Exists(SharedConfigPath)
             ? SharedConfigPath
@@ -447,7 +454,7 @@ public partial class Form1 : Form
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"No se pudo cargar la configuraciÛn: {ex.Message}",
+                $"No se pudo cargar la configuraci√≥n: {ex.Message}",
                 "Gestor de Archivos",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
