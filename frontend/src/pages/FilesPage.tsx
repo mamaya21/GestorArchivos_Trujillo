@@ -387,6 +387,33 @@ export default function FilesPage() {
     )
   }
 
+  async function createTextFile() {
+    if (!currentFolderId || upload) return
+
+    const result = await Swal.fire({
+      title: 'Nuevo archivo de texto',
+      input: 'text',
+      inputLabel: 'Nombre del archivo',
+      inputValue: 'Nuevo documento.txt',
+      showCancelButton: true,
+      confirmButtonText: 'Crear',
+      cancelButtonText: 'Cancelar',
+      inputValidator: (value) => {
+        const name = value.trim()
+        if (!name) return 'Ingresa un nombre.'
+        if (!name.toLowerCase().endsWith('.txt')) return 'El archivo debe tener extensión .txt.'
+        if (name === '.' || name === '..' || /[\\\\/:*?"<>|\\x00-\\x1F]/.test(name) || name.endsWith('.') || name.endsWith(' ')) return 'Nombre de archivo no válido.'
+        return undefined
+      },
+    })
+    if (!result.isConfirmed || !result.value) return
+
+    const name = result.value.trim()
+    const content = 'Archivo de texto creado desde Gestor Archivos.\\n'
+    const file = new File([content], name, { type: 'text/plain' })
+    await uploadFiles([file])
+  }
+
   async function createFolder() {
     const result = await Swal.fire({
       title: 'Nueva carpeta',
@@ -708,6 +735,7 @@ export default function FilesPage() {
       return
     }
     if (action === 'new-folder') { void createFolder(); return }
+    if (action === 'new-text-file') { void createTextFile(); return }
     if (action === 'upload') { fileInput.current?.click(); return }
     if (action === 'open') {
       if (file) openFile(file)
@@ -1374,6 +1402,10 @@ export default function FilesPage() {
             Administrar sincronización
           </button>
 
+          <button type="button" disabled={!!upload} onClick={() => void createTextFile()}>
+            + Nuevo archivo .txt
+          </button>
+
           <button type="button" onClick={createFolder}>
             + Nueva carpeta
           </button>
@@ -1717,7 +1749,7 @@ export default function FilesPage() {
           style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
           onClick={(event) => event.stopPropagation()}>
           {(contextMenu.kind === 'background'
-            ? [{ id: 'paste', label: 'Pegar', disabled: (!moveClipboard && !copyClipboard) || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
+            ? [{ id: 'paste', label: 'Pegar', disabled: (!moveClipboard && !copyClipboard) || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'new-text-file', label: 'Nuevo archivo .txt', disabled: !currentFolderId }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
             : [
               { id: 'open', label: 'Abrir' },
               ...(contextMenu.file ? [{ id: 'download', label: 'Descargar' }] : []),
