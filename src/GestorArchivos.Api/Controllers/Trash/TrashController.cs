@@ -84,6 +84,11 @@ public sealed class TrashController : ControllerBase
         var trashedFolderIds = folderCandidates
             .Select(x => x.Id)
             .ToHashSet();
+        var managedParentIds = await _dbContext.DispositivosSync.AsNoTracking()
+            .Select(x => x.CarpetaRaizId)
+            .ToListAsync(cancellationToken);
+        var managedRoots = managedParentIds.ToHashSet();
+
         var visibleFolders = new List<object>();
 
         foreach (var folder in folderCandidates)
@@ -106,7 +111,9 @@ public sealed class TrashController : ControllerBase
                     folder.Id,
                     folder.Nombre,
                     folder.CarpetaPadreId,
-                    folder.FechaEliminacion
+                    folder.FechaEliminacion,
+                    selectorManaged = folder.CarpetaPadreId.HasValue &&
+                        managedRoots.Contains(folder.CarpetaPadreId.Value)
                 });
             }
         }
