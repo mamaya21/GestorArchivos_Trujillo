@@ -88,25 +88,13 @@ public sealed class SelectiveSyncService
         _suppressDestructiveOperations = !string.Equals(
             previousFingerprint, ComputeSelectionFingerprint(selections), StringComparison.Ordinal);
 
-        foreach (var selection in selections)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (selection.Kind == 1 &&
-                !Directory.Exists(selection.Path))
-            {
-                throw new DirectoryNotFoundException(
-                    $"Carpeta no disponible: {selection.Path}");
-            }
-
-            if (selection.Kind == 0 &&
-                !File.Exists(selection.Path))
-            {
-                throw new FileNotFoundException(
-                    $"Archivo no disponible: {selection.Path}",
-                    selection.Path);
-            }
-        }
+        // While a root is missing, wait for the quarantine decision without
+        // processing other selections. Do not mistake this for a sync failure.
+        // In particular, do not advance the baseline or selection guard.
+        if (selections.Any(selection => selection.Kind == 1
+                ? !Directory.Exists(selection.Path)
+                : !File.Exists(selection.Path)))
+            return;
 
         await ReconcileLocalFolderMovesAsync(selections, cancellationToken);
 
