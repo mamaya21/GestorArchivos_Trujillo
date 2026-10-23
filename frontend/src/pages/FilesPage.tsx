@@ -8,7 +8,7 @@ import {
   type MouseEvent,
   type PointerEvent,
 } from 'react'
-import { apiRaw, apiRequest } from '../api/client'
+import { ApiError, apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
 import { activateSyncOnThisComputer } from '../sync/syncActivation'
 import type {
