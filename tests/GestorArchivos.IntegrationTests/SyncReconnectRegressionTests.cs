@@ -256,6 +256,58 @@ public sealed class SyncReconnectRegressionTests
         }
     }
 
+    [Fact]
+    public async Task ChunkUpload_ReconnectAcceptsIdenticalBytes_RejectsChangedBytes()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync("/api/sync/devices/register",
+            new { name = $"ChunkReplay-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var folderId = device.RootElement.GetProperty("rootFolderId").GetGuid();
+
+        var original = System.Text.Encoding.UTF8.GetBytes("Chunk replay payload A");
+        var changed = System.Text.Encoding.UTF8.GetBytes("Chunk replay payload B");
+        using var init = await owner.PostAsJsonAsync("/api/uploads/initialize",
+            new { folderId, fileName = $"chunk-{Guid.NewGuid():N}.txt",
+                  fileSize = original.Length, contentType = "text/plain" });
+        await RequireSuccess(init);
+        using var initialized = JsonDocument.Parse(await init.Content.ReadAsStringAsync());
+        var uploadId = initialized.RootElement.GetProperty("uploadId").GetGuid();
+        var url = $"/api/uploads/{uploadId}/chunks/0";
+
+        using (var first = new ByteArrayContent(original))
+        using (var response = await owner.PutAsync(url, first))
+            Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using (var status = await owner.GetAsync($"/api/uploads/{uploadId}/status"))
+        {
+            await RequireSuccess(status);
+            using var json = JsonDocument.Parse(await status.Content.ReadAsStringAsync());
+            Assert.Contains(0, json.RootElement.GetProperty("receivedChunks")
+                .EnumerateArray().Select(x => x.GetInt32()));
+        }
+
+        using (var identical = new ByteArrayContent(original))
+        using (var replay = await owner.PutAsync(url, identical))
+            Assert.Equal(HttpStatusCode.NoContent, replay.StatusCode);
+
+        using (var different = new ByteArrayContent(changed))
+        using (var rejected = await owner.PutAsync(url, different))
+            Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+
+        using (var status = await owner.GetAsync($"/api/uploads/{uploadId}/status"))
+        {
+            await RequireSuccess(status);
+            using var json = JsonDocument.Parse(await status.Content.ReadAsStringAsync());
+            Assert.Single(json.RootElement.GetProperty("receivedChunks").EnumerateArray());
+        }
+
+        using var cancel = await owner.DeleteAsync($"/api/uploads/{uploadId}");
+        Assert.Equal(HttpStatusCode.NoContent, cancel.StatusCode);
+    }
+
     private HttpClient Client() => _factory.CreateClient(new()
     {
         AllowAutoRedirect = false,
