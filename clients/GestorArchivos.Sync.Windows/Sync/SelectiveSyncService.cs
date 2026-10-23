@@ -171,6 +171,21 @@ public sealed class SelectiveSyncService
                 Path.GetFullPath(folder.RutaLocal));
             var descendants = items.Where(x =>
                 IsDescendantPath(x.RutaLocal, oldPrefix)).ToList();
+            var descendantFiles = descendants.Where(x =>
+                x.Tipo == SyncItemType.File &&
+                x.ArchivoRemotoId.HasValue).ToList();
+            var baselines = await _baselines.LoadAsync(cancellationToken);
+            if (descendantFiles.Count == 0)
+                throw new InvalidOperationException(
+                    $"No hay archivos verificables para identificar " +
+                    $"la carpeta movida '{folder.RutaLocal}'.");
+
+            // No identificar carpetas con un subconjunto de sus archivos:
+            // podría tratarse de una copia parcial o una pérdida de datos.
+            if (descendants.Any(x => x.Tipo == SyncItemType.File &&
+                !x.ArchivoRemotoId.HasValue))
+                throw new InvalidOperationException(
+                    $"Asociaciones incompletas en '{folder.RutaLocal}'.");
 
             var candidates = new List<string>();
             foreach (var root in selectedRoots)
@@ -188,14 +203,8 @@ public sealed class SelectiveSyncService
 
                     // La carpeta se reconoce por las rutas relativas de
                     // sus archivos asociados y sus hashes de baseline.
-                    var files = descendants.Where(x =>
-                        x.Tipo == SyncItemType.File &&
-                        x.ArchivoRemotoId.HasValue).ToList();
-                    if (files.Count == 0)
-                        continue;
-                    var baselines = await _baselines.LoadAsync(cancellationToken);
                     var verified = true;
-                    foreach (var file in files)
+                    foreach (var file in descendantFiles)
                     {
                         var relative = Path.GetRelativePath(oldPrefix,
                             file.RutaLocal);
@@ -276,11 +285,9 @@ public sealed class SelectiveSyncService
 
             // Verificar que ningún archivo remoto asociado cambió desde
             // el baseline antes de actualizar las rutas de toda la carpeta.
-            var baselineItems = await _baselines.LoadAsync(cancellationToken);
-            foreach (var file in descendants.Where(x =>
-                x.Tipo == SyncItemType.File && x.ArchivoRemotoId.HasValue))
+            foreach (var file in descendantFiles)
             {
-                var baseline = baselineItems.SingleOrDefault(x =>
+                var baseline = baselines.SingleOrDefault(x =>
                     x.SyncItemId == file.SyncItemId &&
                     x.RemoteFileId == file.ArchivoRemotoId);
                 var current = snapshot.Files.SingleOrDefault(x =>
