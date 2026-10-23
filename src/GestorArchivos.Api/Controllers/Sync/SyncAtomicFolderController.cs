@@ -154,6 +154,49 @@ public sealed class SyncAtomicFolderController : ControllerBase
                 });
             }
 
+            if (existingItem.Activo &&
+                existingItem.Tipo == TipoElementoSync.Carpeta &&
+                existingItem.CarpetaRemotaId.HasValue)
+            {
+                var oldFolder = await _db.Carpetas.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == existingItem.CarpetaRemotaId.Value,
+                        cancellationToken);
+                // Las subcarpetas de una selección enviada a papelera
+                // mantienen su asociación activa. Solo reactivar si el
+                // objeto antiguo está confirmado en papelera.
+                if (oldFolder is not null && oldFolder.EnPapelera)
+                {
+                    var occupied = await _db.Carpetas.AsNoTracking().AnyAsync(
+                        x => x.CarpetaPadreId == request.ParentFolderId &&
+                             x.Nombre == name && !x.EnPapelera, cancellationToken);
+                    if (occupied)
+                        return Conflict(new { message = "Ya existe una carpeta activa con ese nombre." });
+                    var tracked = await _db.ElementosSync.SingleAsync(
+                        x => x.Id == existingItem.Id, cancellationToken);
+                    var replacement = new Carpeta
+                    {
+                        Nombre = name,
+                        CarpetaPadreId = request.ParentFolderId,
+                        CreadoPorUsuarioId = userId
+                    };
+                    _db.Carpetas.Add(replacement);
+                    tracked.CarpetaRemotaId = replacement.Id;
+                    await _changes.RegisterAsync(request.ParentFolderId, null,
+                        replacement.Id, "FOLDER_CREATED", sourceDeviceId: deviceId,
+                        cancellationToken: cancellationToken);
+                    await _db.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    return Ok(new
+                    {
+                        syncItemId = tracked.Id,
+                        remoteFolderId = replacement.Id,
+                        replacement.Nombre,
+                        replacement.CarpetaPadreId,
+                        alreadyExisted = false
+                    });
+                }
+            }
+
             if (!existingItem.Activo ||
                 existingItem.Tipo != TipoElementoSync.Carpeta ||
                 !existingItem.CarpetaRemotaId.HasValue)
