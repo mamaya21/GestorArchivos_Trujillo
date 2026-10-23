@@ -79,6 +79,8 @@ public sealed class SelectiveSyncService
             throw new InvalidOperationException(
                 "El servidor no devolvió una raíz Sync válida.");
 
+        await ReconcileSelectedRootRenamesAsync(selections, snapshot, cancellationToken);
+
         foreach (var selection in selections)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -145,6 +147,127 @@ public sealed class SelectiveSyncService
 
         await RefreshBaselineAsync(cancellationToken);
         await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
+    }
+
+
+    // A selected root can only be renamed to a sibling with verified identity.
+    // An absent root is never automatically treated as deleted.
+    private async Task ReconcileSelectedRootRenamesAsync(
+        List<Selection> selections, SyncSnapshot snapshot,
+        CancellationToken cancellationToken)
+    {
+        var items = await _api.GetItemsAsync(cancellationToken);
+        var baselines = await _baselines.LoadAsync(cancellationToken);
+        var changed = false;
+        foreach (var selection in selections)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (selection.Kind == 1 ? Directory.Exists(selection.Path) : File.Exists(selection.Path))
+                continue;
+
+            var oldPath = Path.GetFullPath(selection.Path);
+            var parent = Path.GetDirectoryName(oldPath);
+            if (parent is null || !Directory.Exists(parent))
+                continue; // Offline volume or missing parent: do not touch remote data.
+            ValidatePathWithoutLinks(parent);
+
+            var item = items.SingleOrDefault(x => PathsEqual(x.RutaLocal, oldPath) &&
+                (selection.Kind == 1 ? x.Tipo == SyncItemType.Folder : x.Tipo == SyncItemType.File));
+            if (item is null) continue;
+            var descendants = items.Where(x => PathsEqual(x.RutaLocal, oldPath) ||
+                (selection.Kind == 1 && IsDescendantPath(x.RutaLocal, oldPath))).ToList();
+            var associatedFiles = descendants.Where(x => x.Tipo == SyncItemType.File &&
+                x.ArchivoRemotoId.HasValue).ToList();
+            if (associatedFiles.Count == 0) continue; // No trustworthy identity evidence.
+            if (selection.Kind == 0 && associatedFiles.Count != 1) continue;
+            var candidates = selection.Kind == 1
+                ? Directory.EnumerateDirectories(parent).ToList()
+                : Directory.EnumerateFiles(parent).ToList();
+            var verified = new List<string>();
+            foreach (var candidate in candidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (IsReparsePoint(candidate) ||
+                    items.Any(x => !descendants.Contains(x) && PathsEqual(x.RutaLocal, candidate)) ||
+                    selections.Any(x => PathsEqual(x.Path, candidate)))
+                    continue;
+                var valid = true;
+                foreach (var file in associatedFiles)
+                {
+                    var destinationFile = selection.Kind == 0 ? candidate :
+                        Path.Combine(candidate, Path.GetRelativePath(oldPath, file.RutaLocal));
+                    var baseline = baselines.SingleOrDefault(x =>
+                        x.SyncItemId == file.SyncItemId && x.RemoteFileId == file.ArchivoRemotoId);
+                    var remote = snapshot.Files.SingleOrDefault(x => x.Id == file.ArchivoRemotoId);
+                    if (baseline is null || remote is null ||
+                        !HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
+                        !HashesEqual(remote.HashSha256, baseline.RemoteHash) ||
+                        !File.Exists(destinationFile))
+                    {
+                        valid = false;
+                        break;
+                    }
+                    ValidatePathWithoutLinks(destinationFile);
+                    if (!HashesEqual(await HashLocalAsync(destinationFile, cancellationToken),
+                            baseline.LocalHash))
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (valid) verified.Add(candidate);
+            }
+            if (verified.Count != 1)
+                continue; // Ambiguous or deleted: stop safely, never create a new root.
+            var destination = verified[0];
+            var name = Path.GetFileName(destination);
+            ValidateRemoteName(name);
+            if (snapshot.Folders.Any(x => x.CarpetaPadreId == snapshot.RootFolderId &&
+                    NamesEqual(x.Nombre, name) && x.Id != item.CarpetaRemotaId) ||
+                snapshot.Files.Any(x => x.CarpetaId == snapshot.RootFolderId &&
+                    NamesEqual(x.Nombre, name) && x.Id != item.ArchivoRemotoId))
+                throw new InvalidOperationException(
+                    $"Ya existe '{name}' en la raíz web. Resuelve el conflicto antes de sincronizar.");
+
+            if (selection.Kind == 1 && item.CarpetaRemotaId is Guid folderId)
+                await _api.RenameRemoteFolderAsync(folderId, name, cancellationToken);
+            else if (selection.Kind == 0 && item.ArchivoRemotoId is Guid fileId)
+                await _api.RenameRemoteFileAsync(fileId, name, cancellationToken);
+            else
+                throw new InvalidOperationException($"Asociación incompleta: '{oldPath}'.");
+
+            foreach (var affected in descendants.OrderBy(x => x.RutaLocal.Length))
+            {
+                var newPath = PathsEqual(affected.RutaLocal, oldPath)
+                    ? destination
+                    : Path.Combine(destination, Path.GetRelativePath(oldPath, affected.RutaLocal));
+                await _api.UpdateItemPathAsync(affected.SyncItemId, newPath, cancellationToken);
+                affected.RutaLocal = newPath;
+            }
+            var updatedBaselines = (await _baselines.LoadAsync(cancellationToken)).ToList();
+            foreach (var baseline in updatedBaselines.Where(x =>
+                PathsEqual(x.LocalPath, oldPath) ||
+                (selection.Kind == 1 && IsDescendantPath(x.LocalPath, oldPath))))
+                baseline.LocalPath = PathsEqual(baseline.LocalPath, oldPath)
+                    ? destination
+                    : Path.Combine(destination, Path.GetRelativePath(oldPath, baseline.LocalPath));
+            await _baselines.SaveAsync(updatedBaselines, cancellationToken);
+            selection.Path = destination;
+            changed = true;
+        }
+        if (changed)
+        {
+            var directory = Path.GetDirectoryName(SelectionsPath)!;
+            Directory.CreateDirectory(directory);
+            var temporary = SelectionsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                await File.WriteAllTextAsync(temporary,
+                    JsonSerializer.Serialize(selections), cancellationToken);
+                File.Move(temporary, SelectionsPath, true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
     }
 
     // Reconciliar renombrados y traslados remotos de archivos mediante su identidad.
