@@ -102,7 +102,7 @@ export default function FilesPage() {
   const contextMenuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!contextMenu) return
-    const dismiss = (event: PointerEvent) => {
+    const dismiss = (event: globalThis.PointerEvent) => {
       if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
     }
     const dismissContext = (event: globalThis.MouseEvent) => {
