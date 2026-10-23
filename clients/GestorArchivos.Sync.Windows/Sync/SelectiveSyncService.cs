@@ -197,6 +197,14 @@ public sealed class SelectiveSyncService
                     if (items.Any(x => x.Tipo == SyncItemType.Folder &&
                         PathsEqual(x.RutaLocal, candidate)))
                         continue;
+                    // No aceptar como destino una carpeta que todavía
+                    // está dentro del árbol anterior ni una que contenga
+                    // asociaciones preexistentes de otra carpeta.
+                    if (IsDescendantPath(candidate, oldPrefix) ||
+                        items.Any(x => x.Tipo == SyncItemType.Folder &&
+                            IsDescendantPath(x.RutaLocal, candidate) &&
+                            !IsDescendantPath(x.RutaLocal, oldPrefix)))
+                        continue;
                     if (IsReparsePoint(candidate))
                         throw new InvalidOperationException(
                             $"Enlace de directorio no permitido: '{candidate}'.");
@@ -242,6 +250,7 @@ public sealed class SelectiveSyncService
                     $"Movimiento de carpeta ambiguo: '{folder.RutaLocal}'.");
 
             var destination = candidates[0];
+            ValidatePathWithoutLinks(destination);
             var destinationParent = Path.GetDirectoryName(destination)!;
             var parentMapping = items.SingleOrDefault(x =>
                 x.Tipo == SyncItemType.Folder &&
