@@ -224,7 +224,10 @@ public sealed class SelectiveSyncService
             }
 
             if (candidates.Count == 0)
-                continue;
+                throw new InvalidOperationException(
+                    $"La carpeta asociada '{folder.RutaLocal}' ya no existe. " +
+                    "No se puede distinguir una eliminación de un movimiento " +
+                    "sin evidencia suficiente. Se bloqueó el ciclo.");
             if (candidates.Count != 1)
                 throw new InvalidOperationException(
                     $"Movimiento de carpeta ambiguo: '{folder.RutaLocal}'.");
@@ -269,6 +272,25 @@ public sealed class SelectiveSyncService
                 if (ancestor?.CarpetaPadreId is not Guid next)
                     break;
                 currentParent = next;
+            }
+
+            // Verificar que ningún archivo remoto asociado cambió desde
+            // el baseline antes de actualizar las rutas de toda la carpeta.
+            var baselineItems = await _baselines.LoadAsync(cancellationToken);
+            foreach (var file in descendants.Where(x =>
+                x.Tipo == SyncItemType.File && x.ArchivoRemotoId.HasValue))
+            {
+                var baseline = baselineItems.SingleOrDefault(x =>
+                    x.SyncItemId == file.SyncItemId &&
+                    x.RemoteFileId == file.ArchivoRemotoId);
+                var current = snapshot.Files.SingleOrDefault(x =>
+                    x.Id == file.ArchivoRemotoId);
+                if (baseline is null || current is null ||
+                    baseline.RemoteVersion != current.Version ||
+                    !HashesEqual(baseline.RemoteHash, current.HashSha256))
+                    throw new InvalidOperationException(
+                        $"El contenido remoto de '{file.RutaLocal}' cambió. " +
+                        "Se bloqueó el movimiento de carpeta.");
             }
 
             if (remote.CarpetaPadreId != targetParent)
