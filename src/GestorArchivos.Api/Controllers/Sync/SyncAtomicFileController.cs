@@ -27,17 +27,20 @@ public sealed class SyncAtomicFileController : ControllerBase
     private readonly ISyncChangeService _changes;
     private readonly IFolderPermissionService _permissions;
     private readonly IFileStorage _storage;
+    private readonly IChunkUploadService _chunks;
 
     public SyncAtomicFileController(
         ApplicationDbContext db,
         ISyncChangeService changes,
         IFolderPermissionService permissions,
-        IFileStorage storage)
+        IFileStorage storage,
+        IChunkUploadService chunks)
     {
         _db = db;
         _changes = changes;
         _permissions = permissions;
         _storage = storage;
+        _chunks = chunks;
     }
 
     [HttpPost]
@@ -349,6 +352,57 @@ public sealed class SyncAtomicFileController : ControllerBase
         }
     }
 
+    [HttpPost("uploads/{uploadId:guid}/complete")]
+    public async Task<IActionResult> CompleteUpload(
+        Guid uploadId,
+        [FromBody] CompleteDeviceUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(User.FindFirstValue("device_id"), out var deviceId))
+            return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(request.LocalPath) || request.LocalPath.Length > 2048)
+            return BadRequest(new { message = "Ruta local inválida." });
+
+        var status = await _chunks.GetStatusAsync(uploadId, deviceId, cancellationToken);
+        if (status is null)
+            return NotFound();
+
+        // Create() performs the device-root, permission, duplicate and transaction checks.
+        CompletedChunkUpload completed;
+        try
+        {
+            completed = await _chunks.CompleteAsync(uploadId, deviceId, cancellationToken);
+        }
+        catch (InvalidDataException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+
+        try
+        {
+            await using var stream = await _storage.OpenReadAsync(
+                completed.RelativePath, cancellationToken);
+            var file = new FormFile(stream, 0, completed.FileSize, "file", completed.FileName)
+            {
+                Headers = new HeaderDictionary(),
+                ContentType = completed.ContentType
+            };
+
+            var result = await Create(
+                completed.FolderId, request.LocalPath, file, cancellationToken);
+
+            if (result is OkObjectResult)
+                await _chunks.CancelAsync(uploadId, deviceId, cancellationToken);
+
+            return result;
+        }
+        finally
+        {
+            await _storage.DeleteAsync(completed.RelativePath, CancellationToken.None);
+        }
+    }
+
     private async Task<bool> BelongsToRootAsync(
         Guid folderId,
         Guid rootId,
@@ -384,3 +438,4 @@ public sealed class SyncAtomicFileController : ControllerBase
         return false;
     }
 }
+public sealed record CompleteDeviceUploadRequest(string LocalPath);
