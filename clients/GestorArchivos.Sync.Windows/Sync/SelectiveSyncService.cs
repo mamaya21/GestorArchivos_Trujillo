@@ -1083,8 +1083,44 @@ public sealed class SelectiveSyncService
                 var baseline = baselines.SingleOrDefault(x =>
                     x.SyncItemId == item.SyncItemId &&
                     x.RemoteFileId == item.ArchivoRemotoId);
-                if (baseline is null ||
-                    !HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
+                if (baseline is null)
+                {
+                    // A file created and renamed before its first baseline
+                    // must not be downloaded again under its previous name.
+                    // Accept only a unique same-parent candidate whose bytes
+                    // match the active remote file exactly.
+                    var sameParent = candidates.Where(x =>
+                        PathsEqual(Path.GetDirectoryName(x)!,
+                            Path.GetDirectoryName(item.RutaLocal)!)).ToList();
+                    var missingInParent = missing.Count(x =>
+                        PathsEqual(Path.GetDirectoryName(x.RutaLocal)!,
+                            Path.GetDirectoryName(item.RutaLocal)!));
+                    var remoteFile = snapshot.Files.SingleOrDefault(x =>
+                        x.Id == item.ArchivoRemotoId);
+                    if (sameParent.Count == 1 && missingInParent == 1 &&
+                        remoteFile is not null &&
+                        !snapshot.Files.Any(x => x.Id != remoteFile.Id &&
+                            x.CarpetaId == remoteFile.CarpetaId &&
+                            NamesEqual(x.Nombre, Path.GetFileName(sameParent[0]))))
+                    {
+                        var candidate = sameParent[0];
+                        ValidatePathWithoutLinks(candidate);
+                        if (HashesEqual(await HashLocalAsync(candidate, cancellationToken),
+                                remoteFile.HashSha256))
+                        {
+                            var newName = Path.GetFileName(candidate);
+                            ValidateRemoteName(newName);
+                            await _api.RenameRemoteFileAsync(remoteFile.Id,
+                                newName, cancellationToken);
+                            await _api.UpdateItemPathAsync(item.SyncItemId,
+                                candidate, cancellationToken);
+                            candidates.Remove(candidate);
+                            Console.WriteLine($"[SyncRename] Renombrado sin baseline: {item.RutaLocal} => {candidate}");
+                        }
+                    }
+                    continue;
+                }
+                if (!HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
                     !baseline.RemoteVersion.HasValue)
                     continue;
 
@@ -1666,6 +1702,17 @@ public sealed class SelectiveSyncService
                         x.RemoteFileId == remoteFile.Id);
                 if (baseline is not null)
                     continue;
+
+                // An unmatched local sibling may be a newly renamed file.
+                // Never resurrect the old name while its identity is unresolved.
+                if (localFiles.Values.Any(path =>
+                    !remoteFiles.Any(remote => NamesEqual(remote.Nombre,
+                        Path.GetFileName(path))) &&
+                    !items.Any(mapped => PathsEqual(mapped.RutaLocal, path))))
+                {
+                    Console.WriteLine($"[SyncFolder] Recuperación aplazada por posible renombrado local: {localPath}");
+                    continue;
+                }
 
                 await _download.DownloadAsync(remoteFile.Id, localPath, cancellationToken);
                 fileItem = await FindItemByLocalPathAsync(localPath, cancellationToken);
