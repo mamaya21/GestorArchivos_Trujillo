@@ -308,6 +308,11 @@ public class FoldersController : ControllerBase
         if (await IsSelectorManagedRootAsync(id, cancellationToken))
             return Conflict(new { message = "El renombrado de esta raíz requiere actualizar primero el agente y el selector." });
 
+        // The device container is a server-side display name, not a local
+        // selected root. Renaming it must never rewrite Windows paths.
+        // Device containers are allowed through this rename endpoint; their
+        // sync item mappings remain unchanged because only Nombre is updated.
+
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
                 id,
@@ -338,11 +343,15 @@ public class FoldersController : ControllerBase
                     !x.EnPapelera,
                 cancellationToken);
 
-        if (duplicateExists)
+        var duplicateFileExists = await _dbContext.Archivos.AsNoTracking()
+            .AnyAsync(x => x.CarpetaId == folder.CarpetaPadreId &&
+                x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
+
+        if (duplicateExists || duplicateFileExists)
         {
             return Conflict(new
             {
-                message = "Ya existe una carpeta con ese nombre."
+                message = "Ya existe un archivo o carpeta con ese nombre en este nivel."
             });
         }
 
