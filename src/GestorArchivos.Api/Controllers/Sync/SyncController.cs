@@ -473,6 +473,48 @@ public class SyncController : ControllerBase
         });
     }
 
+    // Desasociar un elemento seleccionado de nuevo únicamente cuando su objeto
+    // remoto anterior está confirmado en la papelera. No elimina archivos.
+    [HttpPost("items/{syncItemId:guid}/detach-if-trashed")]
+    public async Task<IActionResult> DetachIfTrashed(
+        Guid syncItemId, CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (!await _permissionService.HasPermissionAsync(
+                userId, device.RootFolderId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+
+        var item = await _dbContext.ElementosSync.FirstOrDefaultAsync(
+            x => x.Id == syncItemId && x.DispositivoId == deviceId && x.Activo,
+            cancellationToken);
+        if (item is null) return NotFound();
+
+        bool trashed;
+        if (item.Tipo == TipoElementoSync.Carpeta && item.CarpetaRemotaId.HasValue)
+        {
+            trashed = await _dbContext.Carpetas.AnyAsync(
+                x => x.Id == item.CarpetaRemotaId.Value && x.EnPapelera,
+                cancellationToken);
+        }
+        else if (item.Tipo == TipoElementoSync.Archivo && item.ArchivoRemotoId.HasValue)
+        {
+            trashed = await _dbContext.Archivos.AnyAsync(
+                x => x.Id == item.ArchivoRemotoId.Value &&
+                     x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
+        }
+        else return Conflict(new { message = "La asociación remota no es válida." });
+
+        if (!trashed)
+            return Conflict(new { message = "El contenido remoto no está confirmado en la papelera." });
+
+        item.Activo = false;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     [HttpDelete("items/{syncItemId:guid}")]
     public async Task<IActionResult> RemoveItem(
         Guid syncItemId,
