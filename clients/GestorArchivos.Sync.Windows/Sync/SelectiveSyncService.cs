@@ -955,7 +955,7 @@ public sealed class SelectiveSyncService
     }
 
     private async Task RefreshBaselineAsync(
-    CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
         var items = await _api.GetItemsAsync(cancellationToken);
@@ -964,31 +964,35 @@ public sealed class SelectiveSyncService
 
         var remoteFiles = snapshot.Files.ToDictionary(x => x.Id);
 
-        var activeItems = items
+        var associatedItems = items
             .Where(x =>
                 x.Tipo == SyncItemType.File &&
-                x.ArchivoRemotoId.HasValue &&
-                IsSelectedItemPath(x.RutaLocal, selections))
-            .ToDictionary(x => x.SyncItemId);
-
-        // Conservar únicamente baselines de asociaciones activas
-        // cuyos archivos remotos todavía existen.
-        var baseline = old
-            .Where(x =>
-                activeItems.TryGetValue(x.SyncItemId, out var item) &&
-                item.ArchivoRemotoId == x.RemoteFileId &&
-                remoteFiles.ContainsKey(x.RemoteFileId!.Value))
+                x.ArchivoRemotoId.HasValue)
             .GroupBy(x => x.SyncItemId)
             .ToDictionary(x => x.Key, x => x.First());
 
-        foreach (var item in activeItems.Values)
+        // La deselección no debe borrar el historial de una asociación vigente.
+        // No conservar un baseline si la ruta o el archivo asociado cambiaron.
+        var baseline = old
+            .Where(x =>
+                x.RemoteFileId.HasValue &&
+                associatedItems.TryGetValue(x.SyncItemId, out var item) &&
+                item.ArchivoRemotoId == x.RemoteFileId &&
+                PathsEqual(item.RutaLocal, x.LocalPath) &&
+                remoteFiles.ContainsKey(x.RemoteFileId.Value))
+            .GroupBy(x => x.SyncItemId)
+            .ToDictionary(x => x.Key, x => x.First());
+
+        // Solo actualizar baselines de elementos actualmente seleccionados.
+        foreach (var item in associatedItems.Values)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            if (!IsSelectedItemPath(item.RutaLocal, selections))
+                continue;
+
             var remoteId = item.ArchivoRemotoId!.Value;
 
-            // El archivo fue eliminado desde la web.
-            // No consultar su endpoint individual.
             if (!remoteFiles.TryGetValue(remoteId, out var remote))
                 continue;
 
