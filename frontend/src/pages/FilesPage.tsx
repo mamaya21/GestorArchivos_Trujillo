@@ -94,6 +94,7 @@ export default function FilesPage() {
   const [selectedFiles, setSelectedFiles] =
     useState<Set<string>>(new Set())
 
+  const [copyClipboard, setCopyClipboard] = useState<FileItem | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [treeRefresh, setTreeRefresh] = useState(0)
   const [moveClipboard, setMoveClipboard] = useState<MoveClipboard | null>(null)
@@ -591,6 +592,19 @@ export default function FilesPage() {
     return true
   }
 
+  async function pasteCopy() {
+    if (!copyClipboard || !currentFolderId || upload) return
+    try {
+      const response = await apiRaw(`/files/${copyClipboard.id}/download`)
+      if (!response.ok) throw new Error('No se pudo leer el archivo de origen.')
+      const blob = await response.blob()
+      await startUpload(new File([blob], copyClipboard.nombre, { type: copyClipboard.tipoContenido, lastModified: Date.now() }))
+      setCopyClipboard(null)
+    } catch (error) {
+      await showFileError(error)
+    }
+  }
+
   function showContextMenu(event: MouseEvent<HTMLElement>, kind: ContextMenuState['kind'], file?: FileItem, folder?: Folder) {
     event.preventDefault()
     event.stopPropagation()
@@ -603,7 +617,11 @@ export default function FilesPage() {
     if (!menu) return
     const file = menu.file
     const folder = menu.folder
-    if (action === 'paste' && moveClipboard) { void moveItems(moveClipboard, currentFolderId); return }
+    if (action === 'paste') {
+      if (moveClipboard) void moveItems(moveClipboard, currentFolderId)
+      else if (copyClipboard) void pasteCopy()
+      return
+    }
     if (action === 'new-folder') { void createFolder(); return }
     if (action === 'upload') { fileInput.current?.click(); return }
     if (action === 'open') {
@@ -620,7 +638,12 @@ export default function FilesPage() {
       if (file) void deleteFile(file)
       else if (folder) void deleteFolder(folder)
     }
+    if (action === 'copy' && file) {
+      setCopyClipboard(file)
+      setMoveClipboard(null)
+    }
     if (action === 'cut') {
+      setCopyClipboard(null)
       setMoveClipboard({
         folderIds: folder ? [folder.id] : [],
         fileIds: file ? [file.id] : [],
@@ -1364,6 +1387,13 @@ export default function FilesPage() {
           }
         />
 
+        {copyClipboard && (
+          <div className="selection-actions">
+            <span>Copiado: {copyClipboard.nombre}</span>
+            <button type="button" disabled={!currentFolderId || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
+            <button type="button" onClick={() => setCopyClipboard(null)}>Cancelar</button>
+          </div>
+        )}
         {moveClipboard && (
           <div className="selection-actions">
             <span>{moveClipboard.folderIds.length + moveClipboard.fileIds.length} cortado(s)</span>
@@ -1641,17 +1671,18 @@ export default function FilesPage() {
           style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
           onClick={(event) => event.stopPropagation()}>
           {(contextMenu.kind === 'background'
-            ? [{ id: 'paste', label: 'Pegar', disabled: !moveClipboard || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
+            ? [{ id: 'paste', label: 'Pegar', disabled: (!moveClipboard && !copyClipboard) || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
             : [
               { id: 'open', label: 'Abrir' },
               ...(contextMenu.file ? [{ id: 'download', label: 'Descargar' }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar' }] : []),
+              ...(contextMenu.file ? [{ id: 'copy', label: 'Copiar' }] : []),
               { id: 'cut', label: 'Cortar' },
               { id: 'rename', label: 'Renombrar' },
               { id: 'delete', label: 'Mover a papelera' },
             ]).map((item) => (
             <button key={item.id} type="button" role="menuitem"
-              disabled={item.disabled || moving || !!upload}
+              disabled={('disabled' in item && item.disabled) || moving || !!upload}
               onClick={() => contextAction(item.id)}>{item.label}</button>
           ))}
         </div>
