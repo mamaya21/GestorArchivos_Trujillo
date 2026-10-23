@@ -943,7 +943,7 @@ public sealed class SelectiveSyncService
         var baselines = await _baselines.LoadAsync(cancellationToken);
         var snapshot = await _api.GetSnapshotAsync(cancellationToken);
         var plans = new List<(SyncItem Item, string Destination, Guid FolderId,
-            string NewName, SyncBaselineItem Baseline)>();
+            string NewName, SyncBaselineItem Baseline, bool ContentChanged)>();
 
         foreach (var selection in selections.Where(x => x.Kind == 1))
         {
@@ -987,6 +987,28 @@ public sealed class SelectiveSyncService
                         matches.Add(candidate);
                 }
 
+                // A rename may be accompanied by an edit. If there is
+                // exactly one vanished mapped file and one new file in the
+                // same directory, treat it as a tentative rename only when
+                // no other vanished mapping or new candidate competes.
+                // This path is not content identity: keep remote data intact.
+                if (matches.Count == 0)
+                {
+                    var sameParent = candidates.Where(x =>
+                        PathsEqual(Path.GetDirectoryName(x)!, Path.GetDirectoryName(item.RutaLocal)!)).ToList();
+                    var missingInParent = missing.Count(x =>
+                        PathsEqual(Path.GetDirectoryName(x.RutaLocal)!, Path.GetDirectoryName(item.RutaLocal)!));
+                    if (sameParent.Count == 1 && missingInParent == 1 &&
+                        !snapshot.Files.Any(x => x.CarpetaId ==
+                            items.FirstOrDefault(y => y.Tipo == SyncItemType.Folder &&
+                                PathsEqual(y.RutaLocal, Path.GetDirectoryName(item.RutaLocal)!))?.CarpetaRemotaId &&
+                            NamesEqual(x.Nombre, Path.GetFileName(sameParent[0]))))
+                    {
+                        matches.Add(sameParent[0]);
+                        Console.WriteLine($"[SyncRename] Cambio único de nombre y contenido: " +
+                            $"{item.RutaLocal} => {sameParent[0]}");
+                    }
+                }
                 if (matches.Count == 0)
                 {
                     var localDirectory = Path.GetDirectoryName(item.RutaLocal);
@@ -1041,7 +1063,8 @@ public sealed class SelectiveSyncService
                     throw new InvalidOperationException(
                         $"El destino remoto '{destination}' ya está ocupado.");
 
-                plans.Add((item, destination, folderId, newName, baseline));
+                plans.Add((item, destination, folderId, newName, baseline,
+                    !HashesEqual(await HashLocalAsync(destination, cancellationToken), baseline.LocalHash)));
             }
         }
 
@@ -1069,7 +1092,7 @@ public sealed class SelectiveSyncService
                 throw new InvalidOperationException(
                     $"El archivo destino desapareció: '{plan.Destination}'.");
             ValidatePathWithoutLinks(plan.Destination);
-            if (!HashesEqual(await HashLocalAsync(plan.Destination,
+            if (!plan.ContentChanged && !HashesEqual(await HashLocalAsync(plan.Destination,
                     cancellationToken), plan.Baseline.LocalHash))
                 throw new InvalidOperationException(
                     $"El archivo destino cambió: '{plan.Destination}'.");
