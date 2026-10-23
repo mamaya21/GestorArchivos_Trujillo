@@ -308,6 +308,53 @@ public sealed class SyncReconnectRegressionTests
         Assert.Equal(HttpStatusCode.NoContent, cancel.StatusCode);
     }
 
+    [Fact]
+    public async Task SyncUpload_DeviceSession_IsNotAccessibleToAnotherDevice()
+    {
+        using var owner = Client();
+        await Login(owner);
+
+        async Task<(Guid Root, string Token)> Register(string name)
+        {
+            using var response = await owner.PostAsJsonAsync(
+                "/api/sync/devices/register",
+                new { name, operatingSystem = "Windows" });
+            await RequireSuccess(response);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return (json.RootElement.GetProperty("rootFolderId").GetGuid(),
+                json.RootElement.GetProperty("token").GetString()!);
+        }
+
+        var first = await Register($"UploadOwner-{Guid.NewGuid():N}");
+        var second = await Register($"UploadOther-{Guid.NewGuid():N}");
+        using var firstDevice = SyncClient(first.Token);
+        using var otherDevice = SyncClient(second.Token);
+
+        using var initialize = await firstDevice.PostAsJsonAsync(
+            "/api/sync/uploads/initialize",
+            new { folderId = first.Root, fileName = "isolated.bin", fileSize = 4 });
+        await RequireSuccess(initialize);
+        using var json = JsonDocument.Parse(await initialize.Content.ReadAsStringAsync());
+        var uploadId = json.RootElement.GetProperty("uploadId").GetGuid();
+
+        using (var denied = await otherDevice.GetAsync(
+            $"/api/sync/uploads/{uploadId}/status"))
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+
+        using (var payload = new ByteArrayContent(new byte[] { 1, 2, 3, 4 }))
+        using (var denied = await otherDevice.PutAsync(
+            $"/api/sync/uploads/{uploadId}/chunks/0", payload))
+            Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+
+        using (var status = await firstDevice.GetAsync(
+            $"/api/sync/uploads/{uploadId}/status"))
+            await RequireSuccess(status);
+
+        using var cancel = await firstDevice.DeleteAsync(
+            $"/api/sync/uploads/{uploadId}");
+        Assert.Equal(HttpStatusCode.NoContent, cancel.StatusCode);
+    }
+
     private HttpClient Client() => _factory.CreateClient(new()
     {
         AllowAutoRedirect = false,
