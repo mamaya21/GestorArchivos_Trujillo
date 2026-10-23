@@ -321,10 +321,29 @@ public class FilesController : ControllerBase
             .Where(x => x.CarpetaPadreId.HasValue)
             .ToLookup(x => x.CarpetaPadreId!.Value);
 
+        // Ignore selected descendants: they are already included in their ancestor folder.
+        var selectedRootIds = new HashSet<Guid>(folderIds);
+        foreach (var folderId in folderIds)
+        {
+            var visited = new HashSet<Guid> { folderId };
+            var parentId = foldersById[folderId].CarpetaPadreId;
+            while (parentId.HasValue && visited.Add(parentId.Value))
+            {
+                if (selectedRootIds.Contains(parentId.Value))
+                {
+                    selectedRootIds.Remove(folderId);
+                    break;
+                }
+                if (!foldersById.TryGetValue(parentId.Value, out var parent))
+                    break;
+                parentId = parent.CarpetaPadreId;
+            }
+        }
+
         var selectedFolders = new Dictionary<Guid, string>();
         var queue = new Queue<(Guid Id, string Path)>();
         var usedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var folderId in folderIds)
+        foreach (var folderId in selectedRootIds)
         {
             var folder = foldersById[folderId];
             var rootName = SafeZipName(folder.Nombre, folder.Id);
