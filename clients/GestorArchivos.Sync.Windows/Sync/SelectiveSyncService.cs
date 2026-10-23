@@ -726,9 +726,14 @@ public sealed class SelectiveSyncService
                 x.ArchivoRemotoId.HasValue).ToList();
             var baselines = await _baselines.LoadAsync(cancellationToken);
             if (descendantFiles.Count == 0)
-                throw new InvalidOperationException(
-                    $"No hay archivos verificables para identificar " +
-                    $"la carpeta movida '{folder.RutaLocal}'.");
+            {
+                // An empty folder has no content-based move identity.
+                // Do not abort unrelated sync work, but do not guess a
+                // destination or detach/delete the remote folder either.
+                Console.WriteLine($"[SyncFolder] Carpeta sin archivos verificables: " +
+                    $"{folder.RutaLocal}. Asociación remota conservada.");
+                continue;
+            }
 
             // No identificar carpetas con un subconjunto de sus archivos:
             // podría tratarse de una copia parcial o una pérdida de datos.
@@ -1299,8 +1304,18 @@ public sealed class SelectiveSyncService
                 !PathsEqual(x.RutaLocal, localChild));
 
             if (mappedElsewhere is not null)
+            {
+                if (!Directory.Exists(mappedElsewhere.RutaLocal))
+                {
+                    // An empty folder that disappeared must not be recreated
+                    // automatically: it might have been renamed locally.
+                    Console.WriteLine($"[SyncFolder] Carpeta remota conservada sin recrear: " +
+                        $"{mappedElsewhere.RutaLocal}");
+                    continue;
+                }
                 throw new InvalidOperationException(
                     $"La carpeta remota ya está asociada a '{mappedElsewhere.RutaLocal}'.");
+            }
 
             if (matchingLocalFolderPath is null)
             {
