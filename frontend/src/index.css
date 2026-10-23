@@ -1857,3 +1857,106 @@ button:disabled {
   .file-manager .file-primary-actions { width: 100%; }
   .file-manager .file-primary-actions button { flex: 1 1 auto; }
 }
+
+/* File explorer: compact two-level command header */
+.file-manager .toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: visible;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 13px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .035);
+  margin-bottom: 12px;
+}
+.file-manager .toolbar > div:first-child {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 15px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 15px 20px 13px;
+}
+.file-manager .toolbar .folder-navigation {
+  grid-row: 1 / 3;
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+.file-manager .toolbar .folder-navigation button {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  font-size: 18px;
+}
+.file-manager .toolbar .folder-navigation button:hover:not(:disabled) { background: #eff6ff; color: #1d4ed8; }
+.file-manager .toolbar h1 {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 20px;
+  line-height: 1.25;
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: -.035em;
+}
+.file-manager .toolbar .breadcrumbs {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: 12px;
+  color: #64748b;
+  min-width: 0;
+  gap: 4px;
+}
+.file-manager .toolbar .breadcrumbs button { color: #64748b; padding: 0; font-size: 12px; }
+.file-manager .toolbar .breadcrumbs button:hover { color: #2563eb; }
+.file-manager .toolbar-actions {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 20px;
+  border-top: 1px solid #edf1f6;
+  background: #fbfcfe;
+  border-radius: 0 0 13px 13px;
+}
+.file-manager .file-primary-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.file-manager .toolbar-actions button,
+.file-manager .file-sync-dropdown summary {
+  min-height: 35px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 7px;
+  box-shadow: none;
+}
+.file-manager .toolbar-actions .file-action-primary {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #fff;
+}
+.file-manager .toolbar-actions .file-action-primary:hover:not(:disabled) { background: #1e40af; border-color: #1e40af; }
+.file-manager .file-sync-dropdown { margin-left: auto; }
+.file-manager .file-sync-dropdown summary { background: transparent; color: #475569; border-color: transparent; }
+.file-manager .file-sync-dropdown summary:hover { background: #edf2f9; }
+.file-manager .explorer-tools { margin: 0 0 12px; padding: 0; }
+.file-manager .search-box { width: min(100%, 420px); min-height: 39px; border-radius: 9px; }
+@media (max-width: 760px) {
+  .file-manager .toolbar { padding: 0; }
+  .file-manager .toolbar > div:first-child { padding: 13px; column-gap: 10px; }
+  .file-manager .toolbar-actions { padding: 10px 13px; gap: 8px; flex-wrap: wrap; }
+  .file-manager .file-primary-actions { width: 100%; gap: 6px; }
+  .file-manager .file-primary-actions button { flex: 1 1 auto; }
+  .file-manager .file-sync-dropdown { margin-left: 0; }
+  .file-manager .search-box { width: 100%; }
+}
