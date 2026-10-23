@@ -414,6 +414,10 @@ public class FilesController : ControllerBase
         var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
         if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
         if (file.CarpetaId == destination.Id) return NoContent();
+        var sourceRoot = await FindRootAsync(file.CarpetaId, cancellationToken);
+        var destinationRoot = await FindRootAsync(destination.Id, cancellationToken);
+        if (!sourceRoot.HasValue || sourceRoot != destinationRoot)
+            return BadRequest(new { message = "No se permite mover elementos entre raíces distintas." });
         var userId = CurrentUserId();
         if (!await _permissionService.HasPermissionAsync(userId, file.CarpetaId, PermisoCarpeta.Modificar, cancellationToken) ||
             !await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Crear, cancellationToken)) return Forbid();
@@ -485,6 +489,23 @@ public class FilesController : ControllerBase
 
         return userId;
     }
+    private async Task<Guid?> FindRootAsync(Guid folderId, CancellationToken cancellationToken)
+    {
+        var visited = new HashSet<Guid>();
+        var current = folderId;
+        while (visited.Add(current))
+        {
+            var folder = await _dbContext.Carpetas.AsNoTracking()
+                .Where(x => x.Id == current && !x.EnPapelera)
+                .Select(x => new { x.Id, x.CarpetaPadreId })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (folder is null) return null;
+            if (!folder.CarpetaPadreId.HasValue) return folder.Id;
+            current = folder.CarpetaPadreId.Value;
+        }
+        return null;
+    }
+
 }
 
 public sealed record RenameFileRequest(string Name);
