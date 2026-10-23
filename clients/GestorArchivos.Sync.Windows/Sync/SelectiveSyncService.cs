@@ -1042,7 +1042,7 @@ public sealed class SelectiveSyncService
             await _api.MoveRemoteFileToTrashAsync(
                 remote.Id,
                 baseline.RemoteVersion.Value,
-                baseline.RemoteHash,
+                baseline.RemoteHash!,
                 cancellationToken);
         }
     }
