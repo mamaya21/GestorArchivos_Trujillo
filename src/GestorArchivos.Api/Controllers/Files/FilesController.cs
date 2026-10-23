@@ -53,6 +53,10 @@ public class FilesController : ControllerBase
         if (!string.Equals(Path.GetExtension(name), ".txt", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Solo se permite crear archivos .txt." });
 
+        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
+                x => x.CarpetaRaizId == request.FolderId, cancellationToken))
+            return Conflict(new { message = "Los archivos principales de sincronización se agregan desde el selector." });
+
         if (!await _dbContext.Carpetas.AsNoTracking().AnyAsync(
                 x => x.Id == request.FolderId && !x.EnPapelera, cancellationToken))
             return BadRequest(new { message = "La carpeta no existe." });
@@ -121,6 +125,10 @@ public class FilesController : ControllerBase
                 message = "El archivo supera el l�mite de 4 GB."
             });
         }
+
+        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
+                x => x.CarpetaRaizId == folderId, cancellationToken))
+            return Conflict(new { message = "Los archivos principales de sincronización se agregan desde el selector." });
 
         var folderExists = await _dbContext.Carpetas
             .AsNoTracking()
@@ -896,6 +904,9 @@ public class FilesController : ControllerBase
     {
         var file = await _dbContext.Archivos.FirstOrDefaultAsync(x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
         if (file is null) return NotFound();
+        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
+                x => x.CarpetaRaizId == request.DestinationFolderId, cancellationToken))
+            return Conflict(new { message = "El destino principal de sincronización se administra desde el selector." });
         var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
         if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
         if (file.CarpetaId == destination.Id) return NoContent();
