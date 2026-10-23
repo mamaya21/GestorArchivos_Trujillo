@@ -819,7 +819,6 @@ export default function FilesPage() {
                 resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
                 applyToAll: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#copy-conflict-all')?.checked),
               }),
-            }),
             })
             if (choice.isDismissed) break
             const selection = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; applyToAll: boolean } | undefined
