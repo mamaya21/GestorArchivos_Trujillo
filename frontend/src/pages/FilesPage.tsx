@@ -725,31 +725,58 @@ export default function FilesPage() {
   async function pasteCopy() {
     const clipboard = copyClipboard
     if (!clipboard || !currentFolderId || upload || moving) return
-    if (clipboard.folderIds.length) {
-      await Swal.fire({ icon: 'info', title: 'Copiar carpetas', text: 'La copia de carpetas requiere duplicación recursiva y aún no está habilitada.' })
-      return
-    }
     let completed = 0
+    let skipped = 0
+    let applyToAll: 'skip' | 'keepBoth' | null = null
     setMoving(true)
+    setError('')
     try {
-      for (const id of clipboard.fileIds) {
-        const file = await apiRequest<FileItem>(`/files/${id}`)
-        if (file.tamanoBytes === 0) {
-          await apiRequest('/files/empty', { method: 'POST', body: JSON.stringify({ folderId: currentFolderId, name: file.nombre }) })
-        } else {
-          const response = await apiRaw(`/files/${id}/download`)
-          if (!response.ok) throw new Error(`No se pudo descargar "${file.nombre}".`)
-          const blob = await response.blob()
-          const form = new FormData()
-          form.append('file', new File([blob], file.nombre, { type: file.tipoContenido || 'application/octet-stream' }))
-          form.append('folderId', currentFolderId)
-          const result = await apiRaw('/files/upload', { method: 'POST', body: form })
-          if (!result.ok) throw new Error(`No se pudo copiar "${file.nombre}": ${await result.text()}`)
+      const entries = [
+        ...clipboard.folderIds.map(id => ({ id, kind: 'folders' as const })),
+        ...clipboard.fileIds.map(id => ({ id, kind: 'files' as const })),
+      ]
+      for (const entry of entries) {
+        const payload = {
+          destinationFolderId: currentFolderId,
+          fileIds: entry.kind === 'files' ? [entry.id] : [],
+          folderIds: entry.kind === 'folders' ? [entry.id] : [],
         }
-        completed++
+        let resolution: 'skip' | 'keepBoth' | undefined = applyToAll ?? undefined
+        let result: { skipped?: boolean } | undefined
+        try {
+          result = await apiRequest('/files/copy-selection', {
+            method: 'POST',
+            body: JSON.stringify({ ...payload, conflictResolution: resolution }),
+          })
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 409) throw err
+          if (!resolution) {
+            const choice = await Swal.fire({
+              icon: 'warning',
+              title: 'Nombre duplicado',
+              text: 'Ya existe un elemento con el mismo nombre en el destino.',
+              showDenyButton: true,
+              showCancelButton: true,
+              confirmButtonText: 'Conservar ambos',
+              denyButtonText: 'Omitir',
+              cancelButtonText: 'Cancelar operación',
+              input: 'checkbox',
+              inputPlaceholder: 'Aplicar a todos',
+            })
+            if (choice.isDismissed) break
+            resolution = choice.isConfirmed ? 'keepBoth' : 'skip'
+            if (choice.value === 1 || choice.value === '1') applyToAll = resolution
+          }
+          result = await apiRequest('/files/copy-selection', {
+            method: 'POST',
+            body: JSON.stringify({ ...payload, conflictResolution: resolution }),
+          })
+        }
+        if (result?.skipped) skipped++
+        else completed++
       }
       setCopyClipboard(null)
-      setMessage(`${completed} archivo(s) copiado(s) correctamente.`)
+      setMessage(`${completed} copiado(s), ${skipped} omitido(s).`)
     } catch (error) {
       setError(`${completed} copiado(s). Operación interrumpida: ${getError(error)}`)
     } finally {
@@ -883,7 +910,7 @@ export default function FilesPage() {
       else if (file) void deleteFile(file)
       else if (folder) void deleteFolder(folder)
     }
-    if (action === 'copy' && fileIds.length && !folderIds.length) {
+    if (action === 'copy' && (fileIds.length || folderIds.length)) {
       setCopyClipboard({ folderIds, fileIds, sourceFolderId: currentFolderId })
       setMoveClipboard(null)
       setSelectedFolders(new Set())
@@ -1605,7 +1632,7 @@ export default function FilesPage() {
               </>
             ) : copyClipboard ? (
               <>
-                <span className="explorer-selection-count">Copiados: {copyClipboard.fileIds.length} archivo(s)</span>
+                <span className="explorer-selection-count">Copiados: {copyClipboard.fileIds.length + copyClipboard.folderIds.length} elemento(s)</span>
                 <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
                 <button type="button" onClick={() => setCopyClipboard(null)}>Cancelar</button>
               </>
