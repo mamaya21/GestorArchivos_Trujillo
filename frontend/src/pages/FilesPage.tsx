@@ -17,6 +17,12 @@ import type {
   UploadStatusResponse,
 } from '../types/api'
 
+interface MoveClipboard {
+  folderIds: string[]
+  fileIds: string[]
+  sourceFolderId: string | null
+}
+
 interface Breadcrumb {
   id: string | null
   nombre: string
@@ -79,6 +85,9 @@ export default function FilesPage() {
   const [selectedFiles, setSelectedFiles] =
     useState<Set<string>>(new Set())
 
+  const [moveClipboard, setMoveClipboard] = useState<MoveClipboard | null>(null)
+  const [moving, setMoving] = useState(false)
+  const [draggedItem, setDraggedItem] = useState<{ kind: 'file' | 'folder'; id: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [upload, setUpload] = useState<UploadState | null>(null)
@@ -485,6 +494,89 @@ export default function FilesPage() {
     } catch (error) {
       await showFileError(error)
     }
+  }
+
+  function cutSelected() {
+    if (!selectedCount || moving) return
+    setMoveClipboard({
+      folderIds: [...selectedFolders],
+      fileIds: [...selectedFiles],
+      sourceFolderId: currentFolderId,
+    })
+    setMessage('Elementos cortados. Abre la carpeta de destino y selecciona Pegar.')
+  }
+
+  async function moveItems(clipboard: MoveClipboard, destinationFolderId: string | null) {
+    if (!destinationFolderId || moving || upload) return
+    if (clipboard.sourceFolderId === destinationFolderId) {
+      setMoveClipboard(null)
+      return
+    }
+    if (clipboard.folderIds.includes(destinationFolderId)) {
+      await Swal.fire({ icon: 'warning', title: 'Destino inválido', text: 'No puedes mover una carpeta dentro de sí misma.' })
+      return
+    }
+    const confirmation = await Swal.fire({
+      title: 'Mover elementos',
+      text: `¿Mover ${clipboard.folderIds.length + clipboard.fileIds.length} elemento(s) a esta carpeta?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Mover',
+      cancelButtonText: 'Cancelar',
+    })
+    if (!confirmation.isConfirmed) return
+    setMoving(true)
+    let completed = 0
+    try {
+      for (const id of clipboard.folderIds) {
+        await apiRequest(`/folders/${id}/move`, {
+          method: 'PUT',
+          body: JSON.stringify({ destinationFolderId }),
+        })
+        completed++
+      }
+      for (const id of clipboard.fileIds) {
+        await apiRequest(`/files/${id}/move`, {
+          method: 'PUT',
+          body: JSON.stringify({ destinationFolderId }),
+        })
+        completed++
+      }
+      setMoveClipboard(null)
+      setMessage(`${completed} elemento(s) movido(s) correctamente.`)
+    } catch (err) {
+      setError(`${completed} movido(s). Operación interrumpida: ${getError(err)}`)
+      setMoveClipboard(null)
+    } finally {
+      setMoving(false)
+      await loadContents(currentFolderId)
+    }
+  }
+
+  function handleInternalDragStart(event: DragEvent<HTMLDivElement>, kind: 'file' | 'folder', id: string) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-gestorarchivos-item', JSON.stringify({ kind, id }))
+    setDraggedItem({ kind, id })
+  }
+
+  function handleInternalDrop(event: DragEvent<HTMLElement>, destinationFolderId: string | null) {
+    const raw = event.dataTransfer.getData('application/x-gestorarchivos-item')
+    if (!raw) return false
+    event.preventDefault()
+    event.stopPropagation()
+    setDraggedItem(null)
+    try {
+      const item = JSON.parse(raw) as { kind: 'file' | 'folder'; id: string }
+      if ((item.kind !== 'file' && item.kind !== 'folder') || typeof item.id !== 'string') return true
+      void moveItems({
+        folderIds: item.kind === 'folder' ? [item.id] : [],
+        fileIds: item.kind === 'file' ? [item.id] : [],
+        sourceFolderId: currentFolderId,
+      }, destinationFolderId)
+    } catch {
+      setError('No se pudo interpretar el elemento arrastrado.')
+    }
+    return true
   }
 
   async function deleteSelected() {
@@ -947,6 +1039,7 @@ export default function FilesPage() {
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
+    if (handleInternalDrop(event, currentFolderId)) return
     event.preventDefault()
     setDragging(false)
 
@@ -1080,11 +1173,11 @@ export default function FilesPage() {
       className="file-manager"
       onDragEnter={(event) => {
         event.preventDefault()
-        setDragging(true)
+        if (!event.dataTransfer.types.includes('application/x-gestorarchivos-item')) setDragging(true)
       }}
       onDragOver={(event) => {
         event.preventDefault()
-        setDragging(true)
+        if (!event.dataTransfer.types.includes('application/x-gestorarchivos-item')) setDragging(true)
       }}
       onDragLeave={(event) => {
         if (event.currentTarget === event.target) {
@@ -1092,6 +1185,7 @@ export default function FilesPage() {
         }
       }}
       onDrop={handleDrop}
+      onDragEnd={() => setDraggedItem(null)}
     >
       <div className="toolbar">
         <div>
@@ -1125,6 +1219,8 @@ export default function FilesPage() {
 
                 <button
                   type="button"
+                  onDragOver={(event) => { if (draggedItem && item.id) event.preventDefault() }}
+                  onDrop={(event) => { if (item.id) handleInternalDrop(event, item.id) }}
                   onClick={() =>
                     navigateBreadcrumb(index)
                   }
@@ -1217,12 +1313,20 @@ export default function FilesPage() {
           }
         />
 
+        {moveClipboard && (
+          <div className="selection-actions">
+            <span>{moveClipboard.folderIds.length + moveClipboard.fileIds.length} cortado(s)</span>
+            <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={() => void moveItems(moveClipboard, currentFolderId)}>Pegar aquí</button>
+            <button type="button" onClick={() => setMoveClipboard(null)}>Cancelar</button>
+          </div>
+        )}
         {selectedCount > 0 && (
           <div className="selection-actions">
             <strong>
               {selectedCount} seleccionado(s)
             </strong>
 
+            <button type="button" disabled={moving || !!upload} onClick={cutSelected}>Cortar</button>
             <button
               type="button"
               onClick={() => void deleteSelected()}
@@ -1362,6 +1466,10 @@ export default function FilesPage() {
               <div
                 className="explorer-row explorer-row-select"
                 key={folder.id}
+                draggable={!moving && !upload}
+                onDragStart={(event) => handleInternalDragStart(event, 'folder', folder.id)}
+                onDragOver={(event) => { if (draggedItem) { event.preventDefault(); event.stopPropagation() } }}
+                onDrop={(event) => { handleInternalDrop(event, folder.id) }}
                 onDoubleClick={() =>
                   openFolder(folder)
                 }
@@ -1403,6 +1511,10 @@ export default function FilesPage() {
 
                 <div className="row-actions">
 
+                  <button type="button" disabled={moving || !!upload} onClick={() => {
+                    setMoveClipboard({ folderIds: [folder.id], fileIds: [], sourceFolderId: currentFolderId })
+                    setMessage('Carpeta cortada. Abre el destino y selecciona Pegar.')
+                  }}>Cortar</button>
                   <button
                     type="button"
                     onClick={() =>
@@ -1428,6 +1540,8 @@ export default function FilesPage() {
               <div
                 className="explorer-row explorer-row-select"
                 key={file.id}
+                draggable={!moving && !upload}
+                onDragStart={(event) => handleInternalDragStart(event, 'file', file.id)}
                 onDoubleClick={() =>
                   openFile(file)
                 }
@@ -1501,6 +1615,10 @@ export default function FilesPage() {
                     </button>
                   )}
 
+                  <button type="button" disabled={moving || !!upload} onClick={() => {
+                    setMoveClipboard({ folderIds: [], fileIds: [file.id], sourceFolderId: currentFolderId })
+                    setMessage('Archivo cortado. Abre el destino y selecciona Pegar.')
+                  }}>Cortar</button>
                   <button
                     type="button"
                     onClick={() =>
