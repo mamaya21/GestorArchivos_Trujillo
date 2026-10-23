@@ -913,6 +913,53 @@ public class FilesController : ControllerBase
             await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == destination.Id && x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
 
         var finalName = file.Nombre;
+        if (await ExistsAsync(finalName) && request.ConflictResolution == "replace")
+        {
+            var target = await _dbContext.Archivos.FirstOrDefaultAsync(
+                x => x.Id != file.Id && x.CarpetaId == destination.Id &&
+                     x.Nombre == file.Nombre && x.Estado == EstadoArchivo.Activo, cancellationToken);
+            if (target is null) return Conflict(new { message = "No es posible reemplazar una carpeta con un archivo." });
+            if (!await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Modificar, cancellationToken))
+                return Forbid();
+
+            var newPath = Path.Combine(DateTime.UtcNow.ToString("yyyy"), DateTime.UtcNow.ToString("MM"),
+                $"{Guid.NewGuid():N}{Path.GetExtension(file.Nombre)}");
+            await using (var input = await _fileStorage.OpenReadAsync(file.NombreFisico, cancellationToken))
+                await _fileStorage.SaveAsync(newPath, input, cancellationToken);
+            try
+            {
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+                _dbContext.ArchivoVersiones.Add(new ArchivoVersion
+                {
+                    ArchivoId = target.Id, Numero = target.Version,
+                    NombreFisico = target.NombreFisico, HashSha256 = target.HashSha256,
+                    TamanoBytes = target.TamanoBytes, TipoContenido = target.TipoContenido,
+                    UsuarioId = userId
+                });
+                target.NombreFisico = newPath;
+                target.HashSha256 = file.HashSha256;
+                target.TamanoBytes = file.TamanoBytes;
+                target.TipoContenido = file.TipoContenido;
+                target.Version++;
+                target.FechaModificacion = DateTime.UtcNow;
+                var sourceParentId = file.CarpetaId;
+                file.Estado = EstadoArchivo.EnPapelera;
+                file.FechaEliminacion = DateTime.UtcNow;
+                file.FechaModificacion = DateTime.UtcNow;
+                await _syncChangeService.RegisterAsync(sourceParentId, file.Id, null, "FILE_DELETED",
+                    file.Version, cancellationToken: cancellationToken);
+                await _syncChangeService.RegisterAsync(destination.Id, target.Id, null, "FILE_UPDATED",
+                    target.Version, cancellationToken: cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return Ok(new { replaced = true });
+            }
+            catch
+            {
+                await _fileStorage.DeleteAsync(newPath, CancellationToken.None);
+                throw;
+            }
+        }
         if (await ExistsAsync(finalName))
         {
             if (request.ConflictResolution == "skip")
