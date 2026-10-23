@@ -731,6 +731,7 @@ export default function FilesPage() {
     try {
       const response = await apiRaw('/files/download-zip', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileIds }),
       })
       if (!response.ok) throw new Error(await response.text())
