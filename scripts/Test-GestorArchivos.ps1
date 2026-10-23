@@ -24,7 +24,7 @@ try {
         # Reuse installed dependencies during local checks. npm ci deletes and
         # reinstalls node_modules, which fails on Windows when the dev server
         # has loaded native modules (for example Rolldown).
-        $requiredTools = @('node_modules/.bin/vite.cmd', 'node_modules/.bin/tsc.cmd', 'node_modules/.bin/eslint.cmd')
+        $requiredTools = @('node_modules/.bin/vite.cmd', 'node_modules/.bin/tsc.cmd', 'node_modules/.bin/oxlint.cmd')
         $missingTools = @($requiredTools | Where-Object { -not (Test-Path $_) })
         if ($missingTools.Count -gt 0) {
             Write-Host 'Frontend dependencies missing; installing...'
