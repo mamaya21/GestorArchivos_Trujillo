@@ -40,6 +40,10 @@ public interface ISyncApiClient
 
     Task MoveRemoteFileAsync(Guid fileId, Guid destinationFolderId, CancellationToken cancellationToken = default);
 
+    Task RenameRemoteFolderAsync(Guid folderId, string name, CancellationToken cancellationToken = default);
+
+    Task MoveRemoteFolderAsync(Guid folderId, Guid destinationFolderId, CancellationToken cancellationToken = default);
+
     Task DeleteItemAsync(
         Guid syncItemId,
         CancellationToken cancellationToken = default);
