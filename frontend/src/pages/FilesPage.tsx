@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MouseEvent,
 } from 'react'
 import { apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
@@ -16,6 +17,14 @@ import type {
   UploadInitializeResponse,
   UploadStatusResponse,
 } from '../types/api'
+
+interface ContextMenuState {
+  x: number
+  y: number
+  kind: 'file' | 'folder' | 'background'
+  file?: FileItem
+  folder?: Folder
+}
 
 interface MoveClipboard {
   folderIds: string[]
@@ -85,6 +94,8 @@ export default function FilesPage() {
   const [selectedFiles, setSelectedFiles] =
     useState<Set<string>>(new Set())
 
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [treeRefresh, setTreeRefresh] = useState(0)
   const [moveClipboard, setMoveClipboard] = useState<MoveClipboard | null>(null)
   const [moving, setMoving] = useState(false)
   const [draggedItem, setDraggedItem] = useState<{ kind: 'file' | 'folder'; id: string } | null>(null)
@@ -118,6 +129,7 @@ export default function FilesPage() {
       setFiles(data.files)
       setSelectedFolders(new Set())
       setSelectedFiles(new Set())
+      setTreeRefresh((value) => value + 1)
     } catch (err) {
       setError(getError(err))
     } finally {
@@ -577,6 +589,44 @@ export default function FilesPage() {
       setError('No se pudo interpretar el elemento arrastrado.')
     }
     return true
+  }
+
+  function showContextMenu(event: MouseEvent<HTMLElement>, kind: ContextMenuState['kind'], file?: FileItem, folder?: Folder) {
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenu({ x: Math.min(event.clientX, window.innerWidth - 220), y: Math.min(event.clientY, window.innerHeight - 360), kind, file, folder })
+  }
+
+  function contextAction(action: string) {
+    const menu = contextMenu
+    setContextMenu(null)
+    if (!menu) return
+    const file = menu.file
+    const folder = menu.folder
+    if (action === 'paste' && moveClipboard) { void moveItems(moveClipboard, currentFolderId); return }
+    if (action === 'new-folder') { void createFolder(); return }
+    if (action === 'upload') { fileInput.current?.click(); return }
+    if (action === 'open') {
+      if (file) openFile(file)
+      else if (folder) openFolder(folder)
+    }
+    if (action === 'download' && file) downloadFile(file)
+    if (action === 'edit' && file) void editTextFile(file)
+    if (action === 'rename') {
+      if (file) void renameFile(file)
+      else if (folder) void renameFolder(folder)
+    }
+    if (action === 'delete') {
+      if (file) void deleteFile(file)
+      else if (folder) void deleteFolder(folder)
+    }
+    if (action === 'cut') {
+      setMoveClipboard({
+        folderIds: folder ? [folder.id] : [],
+        fileIds: file ? [file.id] : [],
+        sourceFolderId: currentFolderId,
+      })
+    }
   }
 
   async function deleteSelected() {
@@ -1171,6 +1221,7 @@ export default function FilesPage() {
   return (
     <div
       className="file-manager"
+      onClick={() => setContextMenu(null)}
       onDragEnter={(event) => {
         event.preventDefault()
         if (!event.dataTransfer.types.includes('application/x-gestorarchivos-item')) setDragging(true)
@@ -1326,13 +1377,7 @@ export default function FilesPage() {
               {selectedCount} seleccionado(s)
             </strong>
 
-            <button type="button" disabled={moving || !!upload} onClick={cutSelected}>Cortar</button>
-            <button
-              type="button"
-              onClick={() => void deleteSelected()}
-            >
-              Mover a papelera
-            </button>
+            <button type="button" disabled={moving || !!upload} onClick={cutSelected}>Cortar selección</button>
           </div>
         )}
       </div>
@@ -1404,7 +1449,18 @@ export default function FilesPage() {
         </div>
       )}
 
-      <div className="explorer">
+      <div className="explorer-layout">
+        <aside className="folder-sidebar" aria-label="Navegador de carpetas">
+          <strong>Carpetas</strong>
+          <button type="button" className="tree-root" onClick={() => navigateTo([{ id: null, nombre: 'Inicio' }])}>⌂ Inicio</button>
+          <FolderTree parentId={null} depth={0} refresh={treeRefresh} activeId={currentFolderId}
+            onNavigate={(path) => navigateTo([{ id: null, nombre: 'Inicio' }, ...path])}
+            onMove={(event, folderId) => handleInternalDrop(event, folderId)}
+            onContext={(event, folder) => showContextMenu(event, 'folder', undefined, folder)} />
+        </aside>
+      <div className="explorer" onContextMenu={(event) => {
+        if (event.target === event.currentTarget) showContextMenu(event, 'background')
+      }}>
         <div className="explorer-header explorer-header-select">
           <span>
             <input
@@ -1453,7 +1509,7 @@ export default function FilesPage() {
             )}
           </button>
 
-          <span>Acciones</span>
+          <span> </span>
         </div>
 
         {loading ? (
@@ -1466,6 +1522,7 @@ export default function FilesPage() {
               <div
                 className="explorer-row explorer-row-select"
                 key={folder.id}
+                onContextMenu={(event) => showContextMenu(event, 'folder', undefined, folder)}
                 draggable={!moving && !upload}
                 onDragStart={(event) => handleInternalDragStart(event, 'folder', folder.id)}
                 onDragOver={(event) => { if (draggedItem) { event.preventDefault(); event.stopPropagation() } }}
@@ -1509,30 +1566,7 @@ export default function FilesPage() {
                   )}
                 </span>
 
-                <div className="row-actions">
-
-                  <button type="button" disabled={moving || !!upload} onClick={() => {
-                    setMoveClipboard({ folderIds: [folder.id], fileIds: [], sourceFolderId: currentFolderId })
-                    setMessage('Carpeta cortada. Abre el destino y selecciona Pegar.')
-                  }}>Cortar</button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      renameFolder(folder)
-                    }
-                  >
-                    Renombrar
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      deleteFolder(folder)
-                    }
-                  >
-                    Eliminar
-                  </button>
-                </div>
+                <span className="row-more" title="Clic derecho para ver las acciones">⋯</span>
               </div>
             ))}
 
@@ -1540,6 +1574,7 @@ export default function FilesPage() {
               <div
                 className="explorer-row explorer-row-select"
                 key={file.id}
+                onContextMenu={(event) => showContextMenu(event, 'file', file)}
                 draggable={!moving && !upload}
                 onDragStart={(event) => handleInternalDragStart(event, 'file', file.id)}
                 onDoubleClick={() =>
@@ -1585,58 +1620,7 @@ export default function FilesPage() {
                   )}
                 </span>
 
-                <div className="row-actions">
-                  <button
-                    type="button"
-                    onClick={() => openFile(file)}
-                  >
-                    Abrir
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadFile(file)
-                    }
-                  >
-                    Descargar
-                  </button>
-
-                  {[
-                    '.txt', '.md', '.json', '.xml', '.csv',
-                    '.html', '.css', '.js', '.ts', '.log',
-                  ].includes(file.extension.toLowerCase()) && (
-                    <button
-                      type="button"
-                      disabled={!!upload}
-                      onClick={() => void editTextFile(file)}
-                    >
-                      Editar
-                    </button>
-                  )}
-
-                  <button type="button" disabled={moving || !!upload} onClick={() => {
-                    setMoveClipboard({ folderIds: [], fileIds: [file.id], sourceFolderId: currentFolderId })
-                    setMessage('Archivo cortado. Abre el destino y selecciona Pegar.')
-                  }}>Cortar</button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      renameFile(file)
-                    }
-                  >
-                    Renombrar
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      deleteFile(file)
-                    }
-                  >
-                    Eliminar
-                  </button>
-                </div>
+                <span className="row-more" title="Clic derecho para ver las acciones">⋯</span>
               </div>
             ))}
 
@@ -1651,8 +1635,77 @@ export default function FilesPage() {
           </>
         )}
       </div>
+      </div>
+      {contextMenu && (
+        <div className="file-context-menu" role="menu"
+          style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
+          onClick={(event) => event.stopPropagation()}>
+          {(contextMenu.kind === 'background'
+            ? [{ id: 'paste', label: 'Pegar', disabled: !moveClipboard || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
+            : [
+              { id: 'open', label: 'Abrir' },
+              ...(contextMenu.file ? [{ id: 'download', label: 'Descargar' }] : []),
+              ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar' }] : []),
+              { id: 'cut', label: 'Cortar' },
+              { id: 'rename', label: 'Renombrar' },
+              { id: 'delete', label: 'Mover a papelera' },
+            ]).map((item) => (
+            <button key={item.id} type="button" role="menuitem"
+              disabled={item.disabled || moving || !!upload}
+              onClick={() => contextAction(item.id)}>{item.label}</button>
+          ))}
+        </div>
+      )}
     </div>
   )
+}
+
+function FolderTree({ parentId, depth, refresh, activeId, onNavigate, onMove, onContext, ancestors = [] }: {
+  parentId: string | null
+  depth: number
+  refresh: number
+  activeId: string | null
+  onNavigate: (path: Breadcrumb[]) => void
+  onMove: (event: DragEvent<HTMLElement>, id: string) => boolean
+  onContext: (event: MouseEvent<HTMLElement>, folder: Folder) => void
+  ancestors?: Breadcrumb[]
+}) {
+  const [children, setChildren] = useState<Folder[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let live = true
+    const query = parentId ? `?parentId=${encodeURIComponent(parentId)}` : ''
+    void apiRequest<FolderContents>(`/folders${query}`).then((result) => {
+      if (live) setChildren(result.folders)
+    }).catch(() => { if (live) setChildren([]) })
+    return () => { live = false }
+  }, [parentId, refresh])
+  if (depth > 30) return null
+  return <div className="folder-tree">
+    {children.map((folder) => {
+      const path = [...ancestors, { id: folder.id, nombre: folder.nombre }]
+      const isOpen = expanded.has(folder.id)
+      return <div key={folder.id}>
+        <div className={`tree-entry ${activeId === folder.id ? 'tree-entry-active' : ''}`}
+          style={{ paddingLeft: depth * 14 + 6 }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => { onMove(event, folder.id) }}
+          onContextMenu={(event) => onContext(event, folder)}>
+          <button type="button" aria-label={isOpen ? 'Contraer' : 'Expandir'}
+            onClick={() => setExpanded((current) => {
+              const next = new Set(current)
+              if (next.has(folder.id)) next.delete(folder.id)
+              else next.add(folder.id)
+              return next
+            })}>{isOpen ? '▾' : '▸'}</button>
+          <button type="button" className="tree-label" onClick={() => onNavigate(path)}>📁 {folder.nombre}</button>
+        </div>
+        {isOpen && <FolderTree parentId={folder.id} depth={depth + 1} refresh={refresh}
+          activeId={activeId} onNavigate={onNavigate} onMove={onMove}
+          onContext={onContext} ancestors={path} />}
+      </div>
+    })}
+  </div>
 }
 
 function sortIndicator(
