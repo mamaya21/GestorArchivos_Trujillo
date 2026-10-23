@@ -1529,8 +1529,9 @@ public sealed class SelectiveSyncService
             .GroupBy(x => x.SyncItemId)
             .ToDictionary(x => x.Key, x => x.First());
 
-        // La deselección no debe borrar el historial de una asociación vigente.
-        // No conservar un baseline si la ruta o el archivo asociado cambiaron.
+        // Una selección retirada deja de autorizar acceso a su ruta local.
+        // Conservar su historial sin leerla, pero nunca intentar refrescarla.
+        // No conservar un baseline si la asociación remota cambió.
         var baseline = old
             .Where(x =>
                 x.RemoteFileId.HasValue &&
@@ -1554,7 +1555,14 @@ public sealed class SelectiveSyncService
             if (!remoteFiles.TryGetValue(remoteId, out var remote))
                 continue;
 
-            if (!_store.FileExists(item.RutaLocal))
+            // Las selecciones pueden cambiar mientras se ejecuta el ciclo.
+            // Comprobar de nuevo la autorización inmediatamente antes de
+            // acceder al archivo; una deselección no debe abortar el servicio.
+            if (!IsSelectedItemPath(item.RutaLocal,
+                    await LoadSelectionsAsync(cancellationToken)))
+                continue;
+
+            if (!File.Exists(item.RutaLocal))
                 continue;
 
             ValidatePathWithoutLinks(item.RutaLocal);
