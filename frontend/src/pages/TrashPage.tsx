@@ -355,10 +355,21 @@ function formatBytes(bytes: number) {
 }
 
 function formatDate(value: string) {
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+    ? value
+    : `${value}Z`
+
+  const date = new Date(normalized)
+
+  if (Number.isNaN(date.getTime())) {
+    return '—'
+  }
+
   return new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima',
     dateStyle: 'short',
     timeStyle: 'short',
-  }).format(new Date(value))
+  }).format(date)
 }
 
 function getError(error: unknown) {
