@@ -406,6 +406,29 @@ public class FilesController : ControllerBase
         return NoContent();
     }
 
+    [HttpPut("{id:guid}/move")]
+    public async Task<IActionResult> Move(Guid id, MoveFileRequest request, CancellationToken cancellationToken)
+    {
+        var file = await _dbContext.Archivos.FirstOrDefaultAsync(x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
+        if (file is null) return NotFound();
+        var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
+        if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
+        if (file.CarpetaId == destination.Id) return NoContent();
+        var userId = CurrentUserId();
+        if (!await _permissionService.HasPermissionAsync(userId, file.CarpetaId, PermisoCarpeta.Modificar, cancellationToken) ||
+            !await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Crear, cancellationToken)) return Forbid();
+        if (await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == destination.Id && x.Nombre == file.Nombre && x.Estado == EstadoArchivo.Activo, cancellationToken) ||
+            await _dbContext.Carpetas.AnyAsync(x => x.CarpetaPadreId == destination.Id && x.Nombre == file.Nombre && !x.EnPapelera, cancellationToken))
+            return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+        var oldParentId = file.CarpetaId;
+        file.CarpetaId = destination.Id;
+        file.FechaModificacion = DateTime.UtcNow;
+        await _syncChangeService.RegisterAsync(oldParentId, file.Id, null, "FILE_MOVED", file.Version, cancellationToken: cancellationToken);
+        await _syncChangeService.RegisterAsync(destination.Id, file.Id, null, "FILE_MOVED", file.Version, cancellationToken: cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> MoveToTrash(
         Guid id,
@@ -465,3 +488,4 @@ public class FilesController : ControllerBase
 }
 
 public sealed record RenameFileRequest(string Name);
+public sealed record MoveFileRequest(Guid DestinationFolderId);
