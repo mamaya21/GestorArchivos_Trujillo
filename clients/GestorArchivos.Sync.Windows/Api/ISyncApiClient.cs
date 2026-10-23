@@ -30,8 +30,6 @@ public interface ISyncApiClient
         string localPath,
         CancellationToken cancellationToken = default);
 
-    Task RestoreSelectedFolderAsync(string localPath, CancellationToken cancellationToken = default);
-
     Task DetachTrashedItemAsync(Guid syncItemId, CancellationToken cancellationToken = default);
 
     Task TrashSelectedFileAsync(Guid fileId, CancellationToken cancellationToken = default);
