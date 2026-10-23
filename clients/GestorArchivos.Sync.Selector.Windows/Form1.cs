@@ -704,6 +704,7 @@ public partial class Form1 : Form
     {
         public string Path { get; set; } = string.Empty;
         public int Kind { get; set; }
+        public bool SendToTrash { get; set; }
     }
 
     private enum SelectionKind
