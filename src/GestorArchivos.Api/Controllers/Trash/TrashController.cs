@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using GestorArchivos.Application.Common.Validation;
 using GestorArchivos.Application.Common.Security;
 using GestorArchivos.Domain.Enums;
 using GestorArchivos.Domain.Security;
@@ -33,7 +34,7 @@ public sealed class TrashController : ControllerBase
                 storageOptions.Value.RootPath))
         {
             throw new InvalidOperationException(
-                "Storage:RootPath no est· configurado.");
+                "Storage:RootPath no est√° configurado.");
         }
 
         _rootPath = Path.GetFullPath(
@@ -139,6 +140,7 @@ public sealed class TrashController : ControllerBase
     [HttpPost("folders/{id:guid}/restore")]
     public async Task<IActionResult> RestoreFolder(
         Guid id,
+        [FromQuery] string? conflictResolution,
         CancellationToken cancellationToken)
     {
         var rootFolder =
@@ -181,7 +183,7 @@ public sealed class TrashController : ControllerBase
                 return Conflict(new
                 {
                     message =
-                        "La carpeta padre no est· disponible. Restaure primero la carpeta padre."
+                        "La carpeta padre no est√° disponible. Restaure primero la carpeta padre."
                 });
             }
 
@@ -212,6 +214,23 @@ public sealed class TrashController : ControllerBase
                         !x.EnPapelera,
                     cancellationToken);
 
+        if (duplicateRoot && conflictResolution == "skip") return Ok(new { skipped = true });
+        if (duplicateRoot && conflictResolution == "keepBoth")
+        {
+            var baseName = rootFolder.Nombre;
+            var found = false;
+            for (var n = 1; n <= 10000; n++)
+            {
+                var candidate = $"{baseName} ({n})";
+                if (!FileNameValidator.TryValidate(candidate, out _, out _)) break;
+                if (await _dbContext.Carpetas.AnyAsync(x => x.Id != rootFolder.Id && x.CarpetaPadreId == rootFolder.CarpetaPadreId && x.Nombre == candidate && !x.EnPapelera, cancellationToken)) continue;
+                rootFolder.Nombre = candidate;
+                found = true;
+                break;
+            }
+            if (!found) return Conflict(new { message = "No se pudo generar un nombre disponible." });
+            duplicateRoot = false;
+        }
         if (duplicateRoot)
         {
             return Conflict(new
@@ -272,7 +291,7 @@ public sealed class TrashController : ControllerBase
                 return Conflict(new
                 {
                     message =
-                        $"La carpeta '{folder.Nombre}' no pertenece a una estructura restaurable v·lida."
+                        $"La carpeta '{folder.Nombre}' no pertenece a una estructura restaurable v√°lida."
                 });
             }
         }
@@ -309,7 +328,7 @@ public sealed class TrashController : ControllerBase
                 return Conflict(new
                 {
                     message =
-                        $"El archivo '{file.Nombre}' no pertenece a una carpeta v·lida del lote."
+                        $"El archivo '{file.Nombre}' no pertenece a una carpeta v√°lida del lote."
                 });
             }
 
@@ -363,6 +382,7 @@ public sealed class TrashController : ControllerBase
     [HttpPost("files/{id:guid}/restore")]
     public async Task<IActionResult> RestoreFile(
         Guid id,
+        [FromQuery] string? conflictResolution,
         CancellationToken cancellationToken)
     {
         var file = await _dbContext.Archivos
@@ -400,7 +420,7 @@ public sealed class TrashController : ControllerBase
             return Conflict(new
             {
                 message =
-                    "La carpeta contenedora est· en papelera o ya no existe."
+                    "La carpeta contenedora est√° en papelera o ya no existe."
             });
         }
 
@@ -416,6 +436,25 @@ public sealed class TrashController : ControllerBase
                         EstadoArchivo.Activo,
                     cancellationToken);
 
+        if (duplicate && conflictResolution == "skip") return Ok(new { skipped = true });
+        if (duplicate && conflictResolution == "keepBoth")
+        {
+            var extension = Path.GetExtension(file.Nombre);
+            var stem = extension.Length == 0 ? file.Nombre : file.Nombre[..^extension.Length];
+            var found = false;
+            for (var n = 1; n <= 10000; n++)
+            {
+                var candidate = $"{stem} ({n}){extension}";
+                if (!FileNameValidator.TryValidate(candidate, out _, out _)) break;
+                if (await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == file.CarpetaId && x.Nombre == candidate && x.Estado == EstadoArchivo.Activo, cancellationToken)) continue;
+                file.Nombre = candidate;
+                file.Extension = extension;
+                found = true;
+                break;
+            }
+            if (!found) return Conflict(new { message = "No se pudo generar un nombre disponible." });
+            duplicate = false;
+        }
         if (duplicate)
         {
             return Conflict(new
@@ -494,7 +533,7 @@ public sealed class TrashController : ControllerBase
             return Conflict(new
             {
                 message =
-                    "No se pudo preparar el archivo fÌsico para su eliminaciÛn."
+                    "No se pudo preparar el archivo f√≠sico para su eliminaci√≥n."
             });
         }
         catch (UnauthorizedAccessException)
@@ -505,7 +544,7 @@ public sealed class TrashController : ControllerBase
             return Conflict(new
             {
                 message =
-                    "No se pudo preparar el archivo fÌsico para su eliminaciÛn."
+                    "No se pudo preparar el archivo f√≠sico para su eliminaci√≥n."
             });
         }
 
@@ -667,7 +706,7 @@ public sealed class TrashController : ControllerBase
             return Conflict(new
             {
                 message =
-                    "No se pudieron preparar todos los archivos fÌsicos para su eliminaciÛn."
+                    "No se pudieron preparar todos los archivos f√≠sicos para su eliminaci√≥n."
             });
         }
         catch (UnauthorizedAccessException)
@@ -681,7 +720,7 @@ public sealed class TrashController : ControllerBase
             return Conflict(new
             {
                 message =
-                    "No se pudieron preparar todos los archivos fÌsicos para su eliminaciÛn."
+                    "No se pudieron preparar todos los archivos f√≠sicos para su eliminaci√≥n."
             });
         }
 
@@ -733,7 +772,7 @@ public sealed class TrashController : ControllerBase
                 {
                     throw new
                         InvalidOperationException(
-                            "No fue posible determinar el orden de eliminaciÛn de carpetas.");
+                            "No fue posible determinar el orden de eliminaci√≥n de carpetas.");
                 }
 
                 _dbContext.Carpetas
@@ -843,7 +882,7 @@ public sealed class TrashController : ControllerBase
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "Ruta de cuarentena inv·lida.");
+                "Ruta de cuarentena inv√°lida.");
         }
 
         return fullPath;
@@ -885,7 +924,7 @@ public sealed class TrashController : ControllerBase
                 originalPath))
         {
             throw new IOException(
-                $"No se puede restaurar '{originalPath}' porque ya existe un archivo en la ubicaciÛn original.");
+                $"No se puede restaurar '{originalPath}' porque ya existe un archivo en la ubicaci√≥n original.");
         }
 
         System.IO.File.Move(
@@ -907,13 +946,13 @@ public sealed class TrashController : ControllerBase
         }
         catch (IOException)
         {
-            // SQL ya confirmÛ la eliminaciÛn.
+            // SQL ya confirm√≥ la eliminaci√≥n.
             // El archivo permanece aislado en .delete-pending
             // para limpieza posterior.
         }
         catch (UnauthorizedAccessException)
         {
-            // SQL ya confirmÛ la eliminaciÛn.
+            // SQL ya confirm√≥ la eliminaci√≥n.
             // El archivo permanece aislado en .delete-pending
             // para limpieza posterior.
         }
@@ -969,7 +1008,7 @@ public sealed class TrashController : ControllerBase
                 relativePath))
         {
             throw new InvalidOperationException(
-                "No se permiten rutas fÌsicas absolutas.");
+                "No se permiten rutas f√≠sicas absolutas.");
         }
 
         var fullPath =
@@ -989,7 +1028,7 @@ public sealed class TrashController : ControllerBase
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "Ruta fÌsica inv·lida.");
+                "Ruta f√≠sica inv√°lida.");
         }
 
         return fullPath;
