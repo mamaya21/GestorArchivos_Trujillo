@@ -409,9 +409,16 @@ export default function FilesPage() {
     if (!result.isConfirmed || !result.value) return
 
     const name = result.value.trim()
-    const content = 'Archivo de texto creado desde Gestor Archivos.\\n'
-    const file = new File([content], name, { type: 'text/plain' })
-    await uploadFiles([file])
+    try {
+      await apiRequest('/files/empty', {
+        method: 'POST',
+        body: JSON.stringify({ folderId: currentFolderId, name }),
+      })
+      await loadContents(currentFolderId)
+      setMessage(`"${name}" creado correctamente.`)
+    } catch (error) {
+      await showFileError(error)
+    }
   }
 
   async function createFolder() {
