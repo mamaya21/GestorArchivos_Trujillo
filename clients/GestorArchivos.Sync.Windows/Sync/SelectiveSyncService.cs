@@ -1654,7 +1654,26 @@ public sealed class SelectiveSyncService
             var existsLocally = File.Exists(localPath);
 
             if (!existsLocally && fileItem is not null)
-                continue;
+            {
+                // A restored remote file can retain its old SyncItem while
+                // its local copy was moved to the Windows Recycle Bin.
+                // Do not confuse this with a local deletion: a missing local
+                // file may only be restored automatically when there is no
+                // trusted baseline proving that the local file was removed
+                // from an otherwise continuously active remote file.
+                var baseline = (await _baselines.LoadAsync(cancellationToken))
+                    .FirstOrDefault(x => x.SyncItemId == fileItem.SyncItemId &&
+                        x.RemoteFileId == remoteFile.Id);
+                if (baseline is not null)
+                    continue;
+
+                await _download.DownloadAsync(remoteFile.Id, localPath, cancellationToken);
+                fileItem = await FindItemByLocalPathAsync(localPath, cancellationToken);
+                if (fileItem is null)
+                    throw new InvalidOperationException(
+                        $"No se recuperó la asociación de '{localPath}'.");
+                Console.WriteLine($"[SyncFolder] Archivo remoto restaurado: {localPath}");
+            }
 
             if (existsLocally && fileItem is null)
             {
