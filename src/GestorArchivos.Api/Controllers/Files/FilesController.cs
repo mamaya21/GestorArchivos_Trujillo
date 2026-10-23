@@ -354,9 +354,10 @@ public class FilesController : ControllerBase
                 return Forbid();
         }
 
+        var includedFolderIds = selectedFolders.Keys.ToArray();
         var allFiles = await _dbContext.Archivos.AsNoTracking()
             .Where(x => x.Estado == EstadoArchivo.Activo &&
-                (fileIds.Contains(x.Id) || selectedFolders.Keys.Contains(x.CarpetaId)))
+                (fileIds.Contains(x.Id) || includedFolderIds.Contains(x.CarpetaId)))
             .ToListAsync(cancellationToken);
         if (fileIds.Any(id => allFiles.All(x => x.Id != id)))
             return NotFound(new { message = "Algún archivo no existe." });
