@@ -7,9 +7,17 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $root
 try {
-    Write-Host 'Building .NET solution...'
-    dotnet build .\GestorArchivos.sln -c Release -p:UseAppHost=false
-    if ($LASTEXITCODE -ne 0) { throw 'Build .NET failed.' }
+    $runningClients = @(Get-Process -Name 'GestorArchivos.Sync.Windows', 'GestorArchivos.Sync.Selector.Windows' -ErrorAction SilentlyContinue)
+    if ($runningClients.Count -gt 0) {
+        Write-Host 'Windows clients are running. Building API and integration test projects without replacing active Windows binaries...'
+        dotnet build .\tests\GestorArchivos.IntegrationTests\GestorArchivos.IntegrationTests.csproj -c Release
+        if ($LASTEXITCODE -ne 0) { throw 'API/integration-test project build failed.' }
+        Write-Warning 'Windows client compilation skipped because the applications are running. Full solution compilation remains required in CI or after closing the clients.'
+    } else {
+        Write-Host 'Building full .NET solution...'
+        dotnet build .\GestorArchivos.sln -c Release
+        if ($LASTEXITCODE -ne 0) { throw 'Full .NET solution build failed.' }
+    }
     Push-Location (Join-Path $root 'frontend')
     try {
         Write-Host 'Checking frontend...'
