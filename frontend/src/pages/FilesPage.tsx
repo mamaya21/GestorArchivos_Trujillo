@@ -669,11 +669,11 @@ export default function FilesPage() {
         ...clipboard.folderIds.map(id => ({ id, kind: 'folders' as const })),
         ...clipboard.fileIds.map(id => ({ id, kind: 'files' as const })),
       ]
-      let applyToAll: 'skip' | 'keepBoth' | null = null
+      let applyToAll: 'skip' | 'keepBoth' | 'replace' | null = null
 
       for (const item of pending) {
         const source = await apiRequest<{ nombre: string }>(`/${item.kind}/${item.id}`)
-        let resolution: 'skip' | 'keepBoth' | undefined
+        let resolution: 'skip' | 'keepBoth' | 'replace' | undefined
         const normalized = source.nombre.normalize('NFC').toLocaleLowerCase('es')
         if (existingNames.has(normalized)) {
           if (applyToAll) {
@@ -685,16 +685,19 @@ export default function FilesPage() {
               text: `Ya existe "${source.nombre}" en el destino. ¿Qué deseas hacer?`,
               showCancelButton: true,
               showDenyButton: true,
-              confirmButtonText: 'Conservar ambos',
+              confirmButtonText: 'Aplicar',
+              input: 'radio',
+              inputOptions: item.kind === 'files' ? { keepBoth: 'Conservar ambos', replace: 'Reemplazar (guardar versión anterior)', skip: 'Omitir' } : { keepBoth: 'Conservar ambos', skip: 'Omitir' },
+              inputValue: 'keepBoth',
               denyButtonText: 'Omitir',
               cancelButtonText: 'Cancelar operación',
-              input: 'checkbox',
-              inputValue: '0',
-              inputPlaceholder: 'Aplicar a todos los conflictos',
+              html: '<label><input type="checkbox" id="move-all" /> Aplicar a todos</label>',
+              preConfirm: value => ({ resolution: value, all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#move-all')?.checked) }),
             })
             if (choice.isDismissed) break
-            resolution = choice.isConfirmed ? 'keepBoth' : 'skip'
-            if (choice.value === 1 || choice.value === '1') applyToAll = resolution
+            const selected = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; all: boolean } | undefined
+            resolution = choice.isDenied ? 'skip' : (selected?.resolution ?? 'keepBoth')
+            if (selected?.all) applyToAll = resolution
           }
         }
         const result = await apiRequest<{ skipped?: boolean } | undefined>(`/${item.kind}/${item.id}/move`, {
