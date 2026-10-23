@@ -696,9 +696,13 @@ export default function FilesPage() {
   }
 
   function handleInternalDragStart(event: DragEvent<HTMLDivElement>, kind: 'file' | 'folder', id: string) {
-    if (!currentFolderId) { event.preventDefault(); return }
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('application/x-gestorarchivos-item', JSON.stringify({ kind, id }))
+    if (!currentFolderId || moving || upload) { event.preventDefault(); return }
+    const selected = kind === 'folder' ? selectedFolders.has(id) : selectedFiles.has(id)
+    const folderIds = selected ? [...selectedFolders] : kind === 'folder' ? [id] : []
+    const fileIds = selected ? [...selectedFiles] : kind === 'file' ? [id] : []
+    const clipboard: MoveClipboard = { folderIds, fileIds, sourceFolderId: currentFolderId }
+    event.dataTransfer.effectAllowed = 'copyMove'
+    event.dataTransfer.setData('application/x-gestorarchivos-item', JSON.stringify(clipboard))
     setDraggedItem({ kind, id })
   }
 
@@ -708,23 +712,35 @@ export default function FilesPage() {
     event.preventDefault()
     event.stopPropagation()
     setDraggedItem(null)
+    setDragging(false)
     try {
-      const item = JSON.parse(raw) as { kind: 'file' | 'folder'; id: string }
-      if ((item.kind !== 'file' && item.kind !== 'folder') || typeof item.id !== 'string') return true
-      void moveItems({
-        folderIds: item.kind === 'folder' ? [item.id] : [],
-        fileIds: item.kind === 'file' ? [item.id] : [],
-        sourceFolderId: currentFolderId,
-      }, destinationFolderId)
+      const data: unknown = JSON.parse(raw)
+      if (!data || typeof data !== 'object') throw new Error('Selección inválida')
+      const value = data as Partial<MoveClipboard> & { kind?: string; id?: string }
+      const folderIds = Array.isArray(value.folderIds) ? value.folderIds : value.kind === 'folder' && typeof value.id === 'string' ? [value.id] : []
+      const fileIds = Array.isArray(value.fileIds) ? value.fileIds : value.kind === 'file' && typeof value.id === 'string' ? [value.id] : []
+      if (![...folderIds, ...fileIds].every(id => typeof id === 'string') || !folderIds.length && !fileIds.length) throw new Error('Selección inválida')
+      const clipboard: MoveClipboard = { folderIds, fileIds, sourceFolderId: value.sourceFolderId ?? currentFolderId }
+      if (event.ctrlKey) {
+        setMoveClipboard(null)
+        setCopyClipboard(clipboard)
+        void pasteCopiedSelection(clipboard, destinationFolderId)
+      } else {
+        void moveItems(clipboard, destinationFolderId)
+      }
     } catch {
-      setError('No se pudo interpretar el elemento arrastrado.')
+      setError('No se pudo interpretar la selección arrastrada.')
     }
     return true
   }
 
   async function pasteCopy() {
-    const clipboard = copyClipboard
-    if (!clipboard || !currentFolderId || upload || moving) return
+    if (!copyClipboard) return
+    await pasteCopiedSelection(copyClipboard, currentFolderId)
+  }
+
+  async function pasteCopiedSelection(clipboard: MoveClipboard, destinationFolderId: string | null) {
+    if (!destinationFolderId || upload || moving) return
     let completed = 0
     let skipped = 0
     let applyToAll: 'skip' | 'keepBoth' | null = null
@@ -737,7 +753,7 @@ export default function FilesPage() {
       ]
       for (const entry of entries) {
         const payload = {
-          destinationFolderId: currentFolderId,
+          destinationFolderId,
           fileIds: entry.kind === 'files' ? [entry.id] : [],
           folderIds: entry.kind === 'folders' ? [entry.id] : [],
         }
