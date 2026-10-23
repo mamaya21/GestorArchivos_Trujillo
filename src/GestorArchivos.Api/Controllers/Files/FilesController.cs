@@ -1,3 +1,4 @@
+using System.IO.Compression;
 ﻿using System.Security.Claims;
 using System.Security.Cryptography;
 using GestorArchivos.Application.Common.Interfaces;
@@ -291,6 +292,68 @@ public class FilesController : ControllerBase
         }
 
         return Ok(file);
+    }
+
+    public sealed record DownloadZipRequest(Guid[] FileIds);
+
+    [HttpPost("download-zip")]
+    public async Task<IActionResult> DownloadZip(
+        [FromBody] DownloadZipRequest request,
+        CancellationToken cancellationToken)
+    {
+        var ids = request.FileIds?.Distinct().ToArray() ?? Array.Empty<Guid>();
+        if (ids.Length < 2 || ids.Length > 100)
+            return BadRequest(new { message = "Selecciona entre 2 y 100 archivos." });
+
+        var files = await _dbContext.Archivos.AsNoTracking()
+            .Where(x => ids.Contains(x.Id) && x.Estado == EstadoArchivo.Activo)
+            .ToListAsync(cancellationToken);
+        if (files.Count != ids.Length)
+            return NotFound(new { message = "Alguno de los archivos ya no existe." });
+
+        const long maxBytes = 256L * 1024 * 1024;
+        if (files.Sum(x => x.TamanoBytes) > maxBytes)
+            return BadRequest(new { message = "La selección supera el límite de 256 MB para ZIP." });
+
+        foreach (var file in files)
+        {
+            if (!await _permissionService.HasPermissionAsync(
+                    CurrentUserId(), file.CarpetaId, PermisoCarpeta.Leer, cancellationToken))
+                return Forbid();
+            if (!await _fileStorage.ExistsAsync(file.NombreFisico, cancellationToken))
+                return NotFound(new { message = "Falta un archivo físico de la selección." });
+        }
+
+        var output = new MemoryStream();
+        try
+        {
+            using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var file in files)
+                {
+                    var name = Path.GetFileName(file.Nombre);
+                    if (string.IsNullOrWhiteSpace(name)) name = $"{file.Id:N}.bin";
+                    var baseName = Path.GetFileNameWithoutExtension(name);
+                    var extension = Path.GetExtension(name);
+                    var candidate = name;
+                    var suffix = 1;
+                    while (!used.Add(candidate))
+                        candidate = $"{baseName} ({suffix++}){extension}";
+                    var entry = zip.CreateEntry(candidate, CompressionLevel.Fastest);
+                    await using var source = await _fileStorage.OpenReadAsync(file.NombreFisico, cancellationToken);
+                    await using var destination = entry.Open();
+                    await source.CopyToAsync(destination, cancellationToken);
+                }
+            }
+            output.Position = 0;
+            return File(output, "application/zip", "archivos-seleccionados.zip");
+        }
+        catch
+        {
+            await output.DisposeAsync();
+            throw;
+        }
     }
 
     [HttpGet("{id:guid}/download")]
