@@ -4,6 +4,7 @@ import Swal from 'sweetalert2'
 
 interface TrashFolder {
   type: 'folder'
+  selectorManaged?: boolean
   id: string
   nombre: string
   carpetaPadreId: string | null
@@ -71,8 +72,8 @@ export default function TrashPage() {
     x.nombre.toLowerCase().includes(search.toLowerCase()),
   )
 
-  const visibleItems: TrashItem[] = [...folders, ...files]
-  const selectedItems: TrashItem[] = [...data.folders, ...data.files]
+  const visibleItems: TrashItem[] = [...folders.filter(x => !x.selectorManaged), ...files]
+  const selectedItems: TrashItem[] = [...data.folders.filter(x => !x.selectorManaged), ...data.files]
     .filter(item => selected.includes(itemKey(item)))
   const allVisibleSelected = visibleItems.length > 0 &&
     visibleItems.every(item => selected.includes(itemKey(item)))
@@ -267,10 +268,11 @@ export default function TrashPage() {
               <div className="trash-row" key={`folder-${item.id}`}>
                 <div className="item-name">
                   <input type="checkbox" checked={selected.includes(itemKey(item))}
-                    disabled={processing} aria-label={`Seleccionar ${item.nombre}`}
+                    disabled={processing || !!item.selectorManaged} aria-label={`Seleccionar ${item.nombre}`}
                     onChange={() => toggle(item)} />
                   <span className="item-icon">📁</span>
                   {item.nombre}
+                  {item.selectorManaged && <small> · Administrar desde el selector de este dispositivo</small>}
                 </div>
 
                 <span>—</span>
@@ -280,7 +282,7 @@ export default function TrashPage() {
                 <div className="row-actions">
                   <button
                     type="button"
-                    disabled={processing}
+                    disabled={processing || !!item.selectorManaged}
                     onClick={() => void execute([item], 'restore')}
                   >
                     Restaurar
@@ -288,7 +290,7 @@ export default function TrashPage() {
 
                   <button
                     type="button"
-                    disabled={processing}
+                    disabled={processing || !!item.selectorManaged}
                     onClick={() => void execute([item], 'delete')}
                   >
                     Eliminar definitivamente
