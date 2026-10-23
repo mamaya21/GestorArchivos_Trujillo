@@ -945,6 +945,7 @@ export default function FilesPage() {
     }
     if (action === 'download' && (fileIds.length || folderIds.length)) void downloadSelection(fileIds, folderIds)
     if (action === 'edit' && file) void editTextFile(file)
+    if (action === 'versions' && file) void showFileVersions(file)
     if (action === 'rename') {
       if (file) void renameFile(file)
       else if (folder) void renameFolder(folder)
@@ -969,6 +970,65 @@ export default function FilesPage() {
       setSelectedFolders(new Set())
       setSelectedFiles(new Set())
       setMessage(`${folderIds.length + fileIds.length} elemento(s) cortado(s). Abre la carpeta de destino y selecciona Pegar.`)
+    }
+  }
+
+  async function showFileVersions(file: FileItem) {
+    try {
+      const data = await apiRequest<{
+        current: number
+        history: Array<{ id: string; numero: number; tamanoBytes: number; fechaUtc: string }>
+      }>(`/files/${file.id}/versions`)
+      if (!data.history.length) {
+        await Swal.fire({ icon: 'info', title: 'Historial de versiones', text: 'Este archivo todavía no tiene versiones anteriores.' })
+        return
+      }
+      const choices: Record<string, string> = {}
+      for (const version of data.history) {
+        choices[version.id] = `Versión ${version.numero} — ${new Date(version.fechaUtc).toLocaleString()} — ${version.tamanoBytes} bytes`
+      }
+      const choice = await Swal.fire({
+        title: `Versiones de ${file.nombre}`,
+        input: 'select',
+        inputOptions: choices,
+        inputPlaceholder: 'Selecciona una versión',
+        showCancelButton: true,
+        showDenyButton: true,
+        confirmButtonText: 'Restaurar versión',
+        denyButtonText: 'Descargar versión',
+        cancelButtonText: 'Cancelar',
+        inputValidator: value => value ? undefined : 'Selecciona una versión.',
+      })
+      if (choice.isDismissed || !choice.value) return
+      const versionId = String(choice.value)
+      if (choice.isDenied) {
+        const response = await apiRaw(`/files/${file.id}/versions/${versionId}/download`)
+        if (!response.ok) throw new Error('No se pudo descargar la versión.')
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = file.nombre
+        link.click()
+        URL.revokeObjectURL(url)
+        return
+      }
+      if (choice.isConfirmed) {
+        const confirmation = await Swal.fire({
+          icon: 'question',
+          title: 'Restaurar versión',
+          text: 'La versión actual quedará guardada en el historial. ¿Continuar?',
+          showCancelButton: true,
+          confirmButtonText: 'Restaurar',
+          cancelButtonText: 'Cancelar',
+        })
+        if (!confirmation.isConfirmed) return
+        await apiRequest(`/files/${file.id}/versions/${versionId}/restore`, { method: 'POST' })
+        setMessage(`Versión restaurada: ${file.nombre}.`)
+        await loadContents(currentFolderId)
+      }
+    } catch (error) {
+      await showFileError(error)
     }
   }
 
@@ -1956,6 +2016,7 @@ export default function FilesPage() {
             : [
               { id: 'open', label: 'Abrir', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
               ...((contextMenu.file || contextMenu.folder) ? [{ id: 'download', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 || !!contextMenu.folder ? 'Descargar ZIP' : 'Descargar', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 100 }] : []),
+              ...(contextMenu.file ? [{ id: 'versions', label: 'Historial de versiones', disabled: selectedCount > 1 && selectedFiles.has(contextMenu.file.id) }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 }] : []),
               ...((contextMenu.file || (contextMenu.folder && contextMenu.folder.carpetaPadreId)) ? [{ id: 'copy', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Copiar selección (${selectedCount})` : 'Copiar' }] : []),
               ...(currentFolderId ? [{ id: 'cut', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
