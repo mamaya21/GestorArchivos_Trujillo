@@ -295,10 +295,25 @@ public class FilesController : ControllerBase
             await _dbContext.Archivos.AnyAsync(x => x.CarpetaId == parentId && x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
 
         var finalName = originalName;
+        Archivo? replaceTarget = null;
         if (await ExistsAsync(destination.Id, finalName))
         {
             if (request.ConflictResolution == "skip") return Ok(new { skipped = true });
-            if (request.ConflictResolution != "keepBoth")
+            if (request.ConflictResolution == "replace")
+            {
+                if (sourceFile is null)
+                    return Conflict(new { message = "El reemplazo de carpetas requiere resolver cada archivo por separado." });
+                replaceTarget = await _dbContext.Archivos.FirstOrDefaultAsync(
+                    x => x.CarpetaId == destination.Id && x.Nombre == originalName && x.Estado == EstadoArchivo.Activo,
+                    cancellationToken);
+                if (replaceTarget is null)
+                    return Conflict(new { message = "El nombre pertenece a una carpeta. No puede reemplazarse con un archivo." });
+                if (replaceTarget.Id == sourceFile.Id)
+                    return Ok(new { skipped = true });
+                if (!await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Modificar, cancellationToken))
+                    return Forbid();
+            }
+            else if (request.ConflictResolution != "keepBoth")
                 return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
 
             var ext = isFolder ? string.Empty : Path.GetExtension(originalName);
@@ -373,7 +388,35 @@ public class FilesController : ControllerBase
                     await CopyFolderAsync(child.Id, newFolder.Id, child.Nombre);
             }
 
-            if (sourceFile is not null) await CopyFileAsync(sourceFile, destination.Id, finalName);
+            if (replaceTarget is not null && sourceFile is not null)
+            {
+                if (!await _permissionService.HasPermissionAsync(userId, sourceFile.CarpetaId, PermisoCarpeta.Leer, cancellationToken))
+                    return Forbid();
+
+                var nextId = Guid.NewGuid();
+                var newPath = Path.Combine(DateTime.UtcNow.ToString("yyyy"), DateTime.UtcNow.ToString("MM"),
+                    $"{nextId:N}{Path.GetExtension(sourceFile.Nombre)}");
+                await using (var input = await _fileStorage.OpenReadAsync(sourceFile.NombreFisico, cancellationToken))
+                    await _fileStorage.SaveAsync(newPath, input, cancellationToken);
+                copiedPaths.Add(newPath);
+
+                _dbContext.ArchivoVersiones.Add(new ArchivoVersion
+                {
+                    ArchivoId = replaceTarget.Id, Numero = replaceTarget.Version,
+                    NombreFisico = replaceTarget.NombreFisico, HashSha256 = replaceTarget.HashSha256,
+                    TamanoBytes = replaceTarget.TamanoBytes, TipoContenido = replaceTarget.TipoContenido,
+                    UsuarioId = userId
+                });
+                replaceTarget.NombreFisico = newPath;
+                replaceTarget.HashSha256 = sourceFile.HashSha256;
+                replaceTarget.TamanoBytes = sourceFile.TamanoBytes;
+                replaceTarget.TipoContenido = sourceFile.TipoContenido;
+                replaceTarget.Version++;
+                replaceTarget.FechaModificacion = DateTime.UtcNow;
+                await _syncChangeService.RegisterAsync(destination.Id, replaceTarget.Id, null, "FILE_UPDATED",
+                    replaceTarget.Version, cancellationToken: cancellationToken);
+            }
+            else if (sourceFile is not null) await CopyFileAsync(sourceFile, destination.Id, finalName);
             else await CopyFolderAsync(sourceFolder!.Id, destination.Id, finalName);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
