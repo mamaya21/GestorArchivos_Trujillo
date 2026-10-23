@@ -134,27 +134,28 @@ export default function TrashPage() {
                   title: 'Conflicto al restaurar',
                   text: `Ya existe un elemento llamado "${item.nombre}".`,
                   showCancelButton: true,
-                  showDenyButton: true,
-                  confirmButtonText: 'Aplicar',
-                  denyButtonText: 'Omitir',
+                  confirmButtonText: 'Continuar',
                   cancelButtonText: 'Cancelar operación',
-                  input: 'radio',
-                  inputOptions: item.type === 'file'
-                    ? { keepBoth: 'Conservar ambos', replace: 'Reemplazar (guardar versión anterior)', skip: 'Omitir' }
-                    : { keepBoth: 'Conservar ambos', skip: 'Omitir' },
-                  inputValue: 'keepBoth',
-                  html: '<label><input type="checkbox" id="trash-all" /> Aplicar a todos</label>',
-                  preConfirm: value => ({
-                    resolution: value,
+                  confirmButtonColor: '#2563eb',
+                  width: 480,
+                  customClass: { popup: 'ga-conflict-dialog' },
+                  html: `<div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+                    <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Restaurar con un nombre diferente.</small></span></label>
+                    ${item.type === 'file' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
+                    <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No restaurar este elemento y continuar.</small></span></label>
+                  </div><label class="ga-conflict-apply"><input type="checkbox" id="trash-all" /> Aplicar a todos los conflictos</label>`,
+                  preConfirm: () => ({
+                    resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
                     all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#trash-all')?.checked),
                   }),
+                }),
                 })
                 if (choice.isDismissed) {
                   setNotice(`${succeeded} restaurado(s) antes de cancelar.`)
                   return
                 }
                 const selected = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; all: boolean } | undefined
-                resolution = choice.isDenied ? 'skip' : (selected?.resolution ?? 'keepBoth')
+                resolution = selected?.resolution ?? 'keepBoth'
                 if (selected?.all) applyToAll = resolution
               }
               try {
