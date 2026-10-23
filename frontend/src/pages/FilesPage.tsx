@@ -767,12 +767,15 @@ export default function FilesPage() {
     }
     if (action === 'cut') {
       if (!currentFolderId) return
+      const clickedIsSelected = (file && selectedFiles.has(file.id)) || (folder && selectedFolders.has(folder.id))
+      const folderIds = clickedIsSelected ? [...selectedFolders] : folder ? [folder.id] : []
+      const fileIds = clickedIsSelected ? [...selectedFiles] : file ? [file.id] : []
+      if (folderIds.length + fileIds.length === 0) return
       setCopyClipboard(null)
-      setMoveClipboard({
-        folderIds: folder ? [folder.id] : [],
-        fileIds: file ? [file.id] : [],
-        sourceFolderId: currentFolderId,
-      })
+      setMoveClipboard({ folderIds, fileIds, sourceFolderId: currentFolderId })
+      setSelectedFolders(new Set())
+      setSelectedFiles(new Set())
+      setMessage(`${folderIds.length + fileIds.length} elemento(s) cortado(s). Abre la carpeta de destino y selecciona Pegar.`)
     }
   }
 
@@ -1762,7 +1765,7 @@ export default function FilesPage() {
               ...(contextMenu.file ? [{ id: 'download', label: 'Descargar' }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar' }] : []),
               ...(contextMenu.file ? [{ id: 'copy', label: 'Copiar' }] : []),
-              ...(currentFolderId ? [{ id: 'cut', label: 'Cortar' }] : []),
+              ...(currentFolderId ? [{ id: 'cut', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
               ...(!contextMenu.folder || contextMenu.folder.carpetaPadreId ? [
                 { id: 'rename', label: 'Renombrar' },
                 { id: 'delete', label: 'Mover a papelera' },
