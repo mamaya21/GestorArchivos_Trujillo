@@ -19,11 +19,13 @@ This file is the source of truth for regression scope. Never mark a scenario aut
 
 - `AnonymousSecurityRegressionTests.cs`: 19 anonymous protected reads, 6 anonymous writes, and 19 invalid-bearer reads (44 cases). Requires isolated SQL Express. Tests are committed but **not yet executed**.
 
+- `FolderPermissionRegressionTests.cs`: API test for user/group ACLs, inheritance, effective permissions, edit/revoke, invalid flags and forbidden writes. **Not yet executed**.
+
 ## Remaining coverage to implement
 
 | Area | Required automated assertions | Status |
 | --- | --- | --- |
-| Permissions | User/group allow/deny, inheritance, effective permissions, forbidden API operations | Not automated |
+| Permissions | User/group grants, inheritance, effective permissions, edit/revoke, forbidden API writes | Test implemented; execution pending |
 | Disconnection/recovery | Offline edits, reconnect, restart with pending changes, idempotence | Not automated |
 | Conflicts/version history | Both changes retained, conflict handling, version list and restore | Not automated |
 | Transfers | 4 GB upload/download, SHA-256, interrupted upload/download, resume semantics | Not automated |
