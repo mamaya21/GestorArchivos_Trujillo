@@ -99,6 +99,30 @@ export default function FilesPage() {
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStart = useRef<{ x: number; y: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!contextMenu) return
+    const dismiss = (event: PointerEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const dismissContext = (event: globalThis.MouseEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const dismissKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(null)
+    }
+    const dismissScroll = () => setContextMenu(null)
+    document.addEventListener('pointerdown', dismiss, true)
+    document.addEventListener('contextmenu', dismissContext, true)
+    document.addEventListener('keydown', dismissKey)
+    window.addEventListener('scroll', dismissScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true)
+      document.removeEventListener('contextmenu', dismissContext, true)
+      document.removeEventListener('keydown', dismissKey)
+      window.removeEventListener('scroll', dismissScroll, true)
+    }
+  }, [contextMenu])
   const [treeRefresh, setTreeRefresh] = useState(0)
   const [moveClipboard, setMoveClipboard] = useState<MoveClipboard | null>(null)
   const [moving, setMoving] = useState(false)
@@ -677,6 +701,7 @@ export default function FilesPage() {
     if (!menu) return
     const file = menu.file
     const folder = menu.folder
+    if (folder && !folder.carpetaPadreId && (action === 'rename' || action === 'delete' || action === 'cut')) return
     if (action === 'paste') {
       if (moveClipboard) void moveItems(moveClipboard, currentFolderId)
       else if (copyClipboard) void pasteCopy()
@@ -1688,7 +1713,7 @@ export default function FilesPage() {
       </div>
       </div>
       {contextMenu && (
-        <div className="file-context-menu" role="menu"
+        <div ref={contextMenuRef} className="file-context-menu" role="menu"
           style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
           onClick={(event) => event.stopPropagation()}>
           {(contextMenu.kind === 'background'
@@ -1699,8 +1724,10 @@ export default function FilesPage() {
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar' }] : []),
               ...(contextMenu.file ? [{ id: 'copy', label: 'Copiar' }] : []),
               ...(currentFolderId ? [{ id: 'cut', label: 'Cortar' }] : []),
-              { id: 'rename', label: 'Renombrar' },
-              { id: 'delete', label: 'Mover a papelera' },
+              ...(!contextMenu.folder || contextMenu.folder.carpetaPadreId ? [
+                { id: 'rename', label: 'Renombrar' },
+                { id: 'delete', label: 'Mover a papelera' },
+              ] : []),
             ]).map((item) => (
             <button key={item.id} type="button" role="menuitem"
               disabled={('disabled' in item && item.disabled) || moving || !!upload}
