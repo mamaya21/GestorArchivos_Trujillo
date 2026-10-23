@@ -656,10 +656,14 @@ export default function FilesPage() {
     let skipped = 0
     setMoving(true)
     try {
-      // La lista visible corresponde al destino actual. No se altera el origen
-      // hasta que el usuario elige cómo resolver cada conflicto.
+      // Consultar el destino real: al arrastrar sobre otra carpeta, la lista
+      // visible todavía pertenece al origen y no permite detectar conflictos.
+      const destinationContents = await apiRequest<FolderContents>(
+        `/folders?parentId=${encodeURIComponent(destinationFolderId)}`,
+      )
       const existingNames = new Set(
-        [...folders, ...files].map(item => item.nombre.normalize('NFC').toLocaleLowerCase('es')),
+        [...destinationContents.folders, ...destinationContents.files]
+          .map(item => item.nombre.normalize('NFC').toLocaleLowerCase('es')),
       )
       const pending = [
         ...clipboard.folderIds.map(id => ({ id, kind: 'folders' as const })),
