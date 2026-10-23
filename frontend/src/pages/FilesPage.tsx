@@ -95,7 +95,7 @@ export default function FilesPage() {
   const [selectedFiles, setSelectedFiles] =
     useState<Set<string>>(new Set())
 
-  const [copyClipboard, setCopyClipboard] = useState<FileItem | null>(null)
+  const [copyClipboard, setCopyClipboard] = useState<MoveClipboard | null>(null)
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const touchStart = useRef<{ x: number; y: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
@@ -687,15 +687,94 @@ export default function FilesPage() {
   }
 
   async function pasteCopy() {
-    if (!copyClipboard || !currentFolderId || upload) return
+    const clipboard = copyClipboard
+    if (!clipboard || !currentFolderId || upload || moving) return
+    if (clipboard.folderIds.length) {
+      await Swal.fire({ icon: 'info', title: 'Copiar carpetas', text: 'La copia de carpetas requiere duplicación recursiva y aún no está habilitada.' })
+      return
+    }
+    let completed = 0
+    setMoving(true)
     try {
-      const response = await apiRaw(`/files/${copyClipboard.id}/download`)
-      if (!response.ok) throw new Error('No se pudo leer el archivo de origen.')
-      const blob = await response.blob()
-      await startUpload(new File([blob], copyClipboard.nombre, { type: copyClipboard.tipoContenido, lastModified: Date.now() }))
+      for (const id of clipboard.fileIds) {
+        const file = await apiRequest<FileItem>(`/files/${id}`)
+        if (file.tamanoBytes === 0) {
+          await apiRequest('/files/empty', { method: 'POST', body: JSON.stringify({ folderId: currentFolderId, name: file.nombre }) })
+        } else {
+          const response = await apiRaw(`/files/${id}/download`)
+          if (!response.ok) throw new Error(`No se pudo descargar "${file.nombre}".`)
+          const blob = await response.blob()
+          const form = new FormData()
+          form.append('file', new File([blob], file.nombre, { type: file.tipoContenido || 'application/octet-stream' }))
+          form.append('folderId', currentFolderId)
+          const result = await apiRaw('/files/upload', { method: 'POST', body: form })
+          if (!result.ok) throw new Error(`No se pudo copiar "${file.nombre}": ${await result.text()}`)
+        }
+        completed++
+      }
       setCopyClipboard(null)
+      setMessage(`${completed} archivo(s) copiado(s) correctamente.`)
+    } catch (error) {
+      setError(`${completed} copiado(s). Operación interrumpida: ${getError(error)}`)
+    } finally {
+      setMoving(false)
+      await loadContents(currentFolderId)
+    }
+  }
+
+  async function downloadSelection(fileIds: string[]) {
+    if (fileIds.length === 1) {
+      const file = files.find(item => item.id === fileIds[0])
+      if (file) downloadFile(file)
+      return
+    }
+    try {
+      const response = await apiRaw('/files/download-zip', {
+        method: 'POST',
+        body: JSON.stringify({ fileIds }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'archivos-seleccionados.zip'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
     } catch (error) {
       await showFileError(error)
+    }
+  }
+
+  async function deleteSelection(folderIds: string[], fileIds: string[]) {
+    if (!folderIds.length && !fileIds.length || moving) return
+    const confirmation = await Swal.fire({
+      icon: 'warning',
+      title: 'Mover selección a papelera',
+      text: `¿Mover ${folderIds.length + fileIds.length} elemento(s) a la papelera?`,
+      showCancelButton: true,
+      confirmButtonText: 'Mover a papelera',
+      cancelButtonText: 'Cancelar',
+    })
+    if (!confirmation.isConfirmed) return
+    let completed = 0
+    setMoving(true)
+    try {
+      for (const id of fileIds) {
+        await apiRequest(`/files/${id}`, { method: 'DELETE' })
+        completed++
+      }
+      for (const id of folderIds) {
+        await apiRequest(`/folders/${id}`, { method: 'DELETE' })
+        completed++
+      }
+      setMessage(`${completed} elemento(s) enviado(s) a la papelera.`)
+    } catch (error) {
+      setError(`${completed} enviado(s). Operación interrumpida: ${getError(error)}`)
+    } finally {
+      setMoving(false)
+      await loadContents(currentFolderId)
     }
   }
 
@@ -738,7 +817,12 @@ export default function FilesPage() {
     if (!menu) return
     const file = menu.file
     const folder = menu.folder
-    if (folder && !folder.carpetaPadreId && (action === 'rename' || action === 'delete' || action === 'cut')) return
+    const isSelected = Boolean((file && selectedFiles.has(file.id)) || (folder && selectedFolders.has(folder.id)))
+    const folderIds = isSelected ? [...selectedFolders] : folder ? [folder.id] : []
+    const fileIds = isSelected ? [...selectedFiles] : file ? [file.id] : []
+    const multiple = folderIds.length + fileIds.length > 1
+    if (folder && !folder.carpetaPadreId && (action === 'rename' || action === 'delete' || action === 'cut' || action === 'copy')) return
+    if (multiple && ['open', 'edit', 'rename'].includes(action)) return
     if (action === 'paste') {
       if (moveClipboard) void moveItems(moveClipboard, currentFolderId)
       else if (copyClipboard) void pasteCopy()
@@ -751,25 +835,26 @@ export default function FilesPage() {
       if (file) openFile(file)
       else if (folder) openFolder(folder)
     }
-    if (action === 'download' && file) downloadFile(file)
+    if (action === 'download' && fileIds.length && !folderIds.length) void downloadSelection(fileIds)
     if (action === 'edit' && file) void editTextFile(file)
     if (action === 'rename') {
       if (file) void renameFile(file)
       else if (folder) void renameFolder(folder)
     }
     if (action === 'delete') {
-      if (file) void deleteFile(file)
+      if (multiple) void deleteSelection(folderIds, fileIds)
+      else if (file) void deleteFile(file)
       else if (folder) void deleteFolder(folder)
     }
-    if (action === 'copy' && file) {
-      setCopyClipboard(file)
+    if (action === 'copy' && fileIds.length && !folderIds.length) {
+      setCopyClipboard({ folderIds, fileIds, sourceFolderId: currentFolderId })
       setMoveClipboard(null)
+      setSelectedFolders(new Set())
+      setSelectedFiles(new Set())
+      setMessage(`${fileIds.length} archivo(s) copiado(s) al portapapeles.`)
     }
     if (action === 'cut') {
       if (!currentFolderId) return
-      const clickedIsSelected = (file && selectedFiles.has(file.id)) || (folder && selectedFolders.has(folder.id))
-      const folderIds = clickedIsSelected ? [...selectedFolders] : folder ? [folder.id] : []
-      const fileIds = clickedIsSelected ? [...selectedFiles] : file ? [file.id] : []
       if (folderIds.length + fileIds.length === 0) return
       setCopyClipboard(null)
       setMoveClipboard({ folderIds, fileIds, sourceFolderId: currentFolderId })
@@ -1483,8 +1568,8 @@ export default function FilesPage() {
               </>
             ) : copyClipboard ? (
               <>
-                <span className="explorer-selection-count">Copiado: {copyClipboard.nombre}</span>
-                <button type="button" disabled={!currentFolderId || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
+                <span className="explorer-selection-count">Copiados: {copyClipboard.fileIds.length} archivo(s)</span>
+                <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
                 <button type="button" onClick={() => setCopyClipboard(null)}>Cancelar</button>
               </>
             ) : (
@@ -1761,14 +1846,14 @@ export default function FilesPage() {
           {(contextMenu.kind === 'background'
             ? [{ id: 'paste', label: 'Pegar', disabled: (!moveClipboard && !copyClipboard) || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'new-text-file', label: 'Nuevo archivo .txt', disabled: !currentFolderId }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
             : [
-              { id: 'open', label: 'Abrir' },
-              ...(contextMenu.file ? [{ id: 'download', label: 'Descargar' }] : []),
-              ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar' }] : []),
-              ...(contextMenu.file ? [{ id: 'copy', label: 'Copiar' }] : []),
+              { id: 'open', label: 'Abrir', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
+              ...(contextMenu.file ? [{ id: 'download', label: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 ? 'Descargar ZIP' : 'Descargar', disabled: selectedFolders.size > 0 && selectedFiles.has(contextMenu.file!.id) || selectedFiles.has(contextMenu.file!.id) && selectedFiles.size > 100 }] : []),
+              ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 }] : []),
+              ...(contextMenu.file ? [{ id: 'copy', label: selectedFiles.has(contextMenu.file!.id) && selectedFiles.size > 1 ? `Copiar selección (${selectedFiles.size})` : 'Copiar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedFolders.size > 0 }] : []),
               ...(currentFolderId ? [{ id: 'cut', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
               ...(!contextMenu.folder || contextMenu.folder.carpetaPadreId ? [
-                { id: 'rename', label: 'Renombrar' },
-                { id: 'delete', label: 'Mover a papelera' },
+                { id: 'rename', label: 'Renombrar', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
+                { id: 'delete', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Mover selección a papelera (${selectedCount})` : 'Mover a papelera' },
               ] : []),
             ]).map((item) => (
             <button key={item.id} type="button" role="menuitem"
