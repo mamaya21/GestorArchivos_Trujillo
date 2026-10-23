@@ -1481,6 +1481,14 @@ public sealed class SelectiveSyncService
                     existingMapping.SyncItemId, cancellationToken);
             }
 
+            // A directory may disappear after the initial enumeration.
+            // Never create a remote folder from a stale local snapshot.
+            if (!Directory.Exists(localFolder.Value))
+            {
+                Console.WriteLine($"[SyncFolder] Se omitió carpeta local desaparecida: {localFolder.Value}");
+                continue;
+            }
+
             if (IsReparsePoint(localFolder.Value))
                 throw new InvalidOperationException(
                     $"No se sincronizará un enlace o punto de montaje: '{localFolder.Value}'.");
@@ -1514,10 +1522,16 @@ public sealed class SelectiveSyncService
                     $"No se pudo verificar la asociación atómica de '{localFolder.Value}'.");
             }
 
-            await SyncFolderAsync(
-                created.RemoteFolderId,
-                localFolder.Value,
-                cancellationToken);
+            // A concurrent rename/delete after remote creation must not
+            // abort the entire sync cycle. Reconciliation handles the mapping
+            // on the next pass without treating absence as remote deletion.
+            if (Directory.Exists(localFolder.Value))
+                await SyncFolderAsync(
+                    created.RemoteFolderId,
+                    localFolder.Value,
+                    cancellationToken);
+            else
+                Console.WriteLine($"[SyncFolder] Carpeta desapareció durante la creación: {localFolder.Value}");
         }
 
         // REMOTO -> LOCAL: ARCHIVOS
