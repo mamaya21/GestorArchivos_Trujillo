@@ -62,12 +62,12 @@ public sealed class SyncAtomicFileController : ControllerBase
             string.IsNullOrWhiteSpace(localPath) ||
             localPath.Length > 2048 ||
             file is null ||
-            file.Length <= 0 ||
+            file.Length < 0 ||
             file.Length > MaxFileSize)
         {
             return BadRequest(new
             {
-                message = "Datos de archivo inv·lidos."
+                message = "Datos de archivo inv√°lidos."
             });
         }
 
@@ -138,7 +138,7 @@ public sealed class SyncAtomicFileController : ControllerBase
             {
                 return Conflict(new
                 {
-                    message = "La ruta local ya tiene otra asociaciÛn."
+                    message = "La ruta local ya tiene otra asociaci√≥n."
                 });
             }
 
@@ -155,7 +155,7 @@ public sealed class SyncAtomicFileController : ControllerBase
             {
                 return Conflict(new
                 {
-                    message = "La asociaciÛn existente no coincide."
+                    message = "La asociaci√≥n existente no coincide."
                 });
             }
 
@@ -286,7 +286,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                 }
                 catch
                 {
-                    // Conservar la excepciÛn original.
+                    // Conservar la excepci√≥n original.
                 }
 
                 if (physicalSaveAttempted)
@@ -299,7 +299,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                     }
                     catch
                     {
-                        // Requiere limpieza posterior del archivo huÈrfano.
+                        // Requiere limpieza posterior del archivo hu√©rfano.
                     }
                 }
             }
