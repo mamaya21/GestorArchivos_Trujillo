@@ -309,6 +309,79 @@ public sealed class SyncReconnectRegressionTests
     }
 
     [Fact]
+    public async Task SyncUpload_IncompleteTransfer_DoesNotPublishFile()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync(
+            "/api/sync/devices/register",
+            new { name = $"Incomplete-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"incomplete-{Guid.NewGuid():N}.txt";
+        using var sync = SyncClient(token);
+        using var init = await sync.PostAsJsonAsync(
+            "/api/sync/uploads/initialize",
+            new { folderId = root, fileName = name, fileSize = 17 });
+        await RequireSuccess(init);
+        using var json = JsonDocument.Parse(await init.Content.ReadAsStringAsync());
+        var id = json.RootElement.GetProperty("uploadId").GetGuid();
+        using var complete = await sync.PostAsJsonAsync(
+            $"/api/sync/files/atomic/uploads/{id}/complete",
+            new { localPath = $"C:\\SyncReplay\\{name}" });
+        Assert.Equal(HttpStatusCode.BadRequest, complete.StatusCode);
+        using var status = await sync.GetAsync($"/api/sync/uploads/{id}/status");
+        await RequireSuccess(status);
+        using var items = await sync.GetAsync("/api/sync/items");
+        await RequireSuccess(items);
+        using var listing = JsonDocument.Parse(await items.Content.ReadAsStringAsync());
+        Assert.DoesNotContain(listing.RootElement.EnumerateArray(),
+            x => x.GetProperty("rutaLocal").GetString() == $"C:\\SyncReplay\\{name}");
+    }
+
+    [Fact]
+    public async Task SyncUpload_DuplicateDestination_IsRejectedWithoutReplacingExistingFile()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync(
+            "/api/sync/devices/register",
+            new { name = $"DuplicateChunk-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"duplicate-{Guid.NewGuid():N}.txt";
+        var path = $"C:\\SyncReplay\\{name}";
+        using var sync = SyncClient(token);
+        using (var form = new MultipartFormDataContent())
+        {
+            form.Add(new StringContent(root.ToString()), "folderId");
+            form.Add(new StringContent(path), "localPath");
+            form.Add(new ByteArrayContent(new byte[] { 1, 2, 3 }), "file", name);
+            using var created = await sync.PostAsync("/api/sync/files/atomic", form);
+            await RequireSuccess(created);
+        }
+        using var init = await sync.PostAsJsonAsync(
+            "/api/sync/uploads/initialize",
+            new { folderId = root, fileName = name, fileSize = 3 });
+        await RequireSuccess(init);
+        using var json = JsonDocument.Parse(await init.Content.ReadAsStringAsync());
+        var id = json.RootElement.GetProperty("uploadId").GetGuid();
+        using (var chunk = new ByteArrayContent(new byte[] { 9, 8, 7 }))
+        using (var sent = await sync.PutAsync(
+            $"/api/sync/uploads/{id}/chunks/0", chunk))
+            Assert.Equal(HttpStatusCode.NoContent, sent.StatusCode);
+        using var complete = await sync.PostAsJsonAsync(
+            $"/api/sync/files/atomic/uploads/{id}/complete", new { localPath = path });
+        Assert.Equal(HttpStatusCode.Conflict, complete.StatusCode);
+        using var status = await sync.GetAsync($"/api/sync/uploads/{id}/status");
+        await RequireSuccess(status);
+    }
+
+    [Fact]
     public async Task SyncUpload_ReconnectAfterFirstChunk_ContinuesMissingChunk()
     {
         using var owner = Client();
