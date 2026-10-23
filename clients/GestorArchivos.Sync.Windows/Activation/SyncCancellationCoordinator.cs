@@ -2,10 +2,14 @@ namespace GestorArchivos.Sync.Windows.Activation;
 
 public sealed class SyncCancellationCoordinator : IDisposable
 {
-    private readonly CancellationTokenSource _source = new();
+    private CancellationTokenSource _source = new();
     private readonly object _gate = new();
     private Task? _engineTask;
-    public CancellationToken Token => _source.Token;
+
+    public CancellationToken Token
+    {
+        get { lock (_gate) return _source.Token; }
+    }
 
     public void Track(Task engineTask)
     {
@@ -14,12 +18,35 @@ public sealed class SyncCancellationCoordinator : IDisposable
 
     public async Task StopAndWaitAsync(CancellationToken cancellationToken)
     {
-        _source.Cancel();
         Task? running;
-        lock (_gate) running = _engineTask;
+        lock (_gate)
+        {
+            _source.Cancel();
+            running = _engineTask;
+        }
+
         if (running is not null)
-            await running.WaitAsync(cancellationToken);
+        {
+            try { await running.WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        }
     }
 
-    public void Dispose() => _source.Dispose();
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            if (!_source.IsCancellationRequested) return;
+            if (_engineTask is { IsCompleted: false })
+                throw new InvalidOperationException("La sincronización anterior aún está terminando.");
+            _source.Dispose();
+            _source = new CancellationTokenSource();
+            _engineTask = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_gate) _source.Dispose();
+    }
 }
