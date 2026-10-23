@@ -212,6 +212,11 @@ public sealed class ActivationListenerService : BackgroundService
                 device,
                 cancellationToken);
 
+            // Una activación nueva reanuda el motor sin reiniciar el servicio.
+            _cancellation.Reset();
+            if (File.Exists(PausePath))
+                File.Delete(PausePath);
+
             context.Response.StatusCode =
                 (int)HttpStatusCode.NoContent;
 
