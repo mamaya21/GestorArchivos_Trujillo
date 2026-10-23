@@ -104,7 +104,7 @@ public class SyncDevicesController : ControllerBase
         var folders = await _dbContext.Carpetas.Where(x => ids.Contains(x.Id) && !x.EnPapelera)
             .ToListAsync(cancellationToken);
         var files = await _dbContext.Archivos
-            .Where(x => ids.Contains(x.CarpetaId) && x.Estado == GestorArchivos.Domain.Entities.EstadoArchivo.Activo)
+            .Where(x => ids.Contains(x.CarpetaId) && x.Estado == GestorArchivos.Domain.Enums.EstadoArchivo.Activo)
             .ToListAsync(cancellationToken);
         var now = DateTime.UtcNow;
         var batch = Guid.NewGuid();
@@ -117,7 +117,7 @@ public class SyncDevicesController : ControllerBase
         }
         foreach (var file in files)
         {
-            file.Estado = GestorArchivos.Domain.Entities.EstadoArchivo.EnPapelera;
+            file.Estado = GestorArchivos.Domain.Enums.EstadoArchivo.EnPapelera;
             file.FechaEliminacion = now;
             file.FechaModificacion = now;
             file.EliminacionLoteId = batch;
