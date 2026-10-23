@@ -689,7 +689,7 @@ export default function FilesPage() {
               confirmButtonColor: '#2563eb',
               width: 480,
               customClass: { popup: 'ga-conflict-dialog' },
-              html: `<div class="ga-conflict-item"><span class="ga-conflict-item-label">${entry.kind === 'folders' ? 'Carpeta' : 'Archivo'} con conflicto</span><strong class="ga-conflict-item-name">${source.nombre.replace(/[&<>\"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' })[char] ?? char)}</strong><span class="ga-conflict-item-hint">Ya existe un elemento con este nombre en el destino.</span></div><div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+              html: `<div class="ga-conflict-item"><span class="ga-conflict-item-label">${item.kind === 'folders' ? 'Carpeta' : 'Archivo'} con conflicto</span><strong class="ga-conflict-item-name">${source.nombre.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)}</strong><span class="ga-conflict-item-hint">Ya existe un elemento con este nombre en el destino.</span></div><div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
                 <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Crear una copia con un nombre diferente.</small></span></label>
                 ${item.kind === 'files' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
                 <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No modificar este elemento y continuar.</small></span></label>
@@ -809,7 +809,7 @@ export default function FilesPage() {
               confirmButtonColor: '#2563eb',
               width: 480,
               customClass: { popup: 'ga-conflict-dialog' },
-              html: `<div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+              html: `<div class="ga-conflict-item"><span class="ga-conflict-item-label">${entry.kind === 'folders' ? 'Carpeta' : 'Archivo'} con conflicto</span><strong class="ga-conflict-item-name">${source.nombre.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)}</strong><span class="ga-conflict-item-hint">Ya existe un elemento con este nombre en el destino.</span></div><div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
                 <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Crear una copia con un nombre diferente.</small></span></label>
                 ${entry.kind === 'files' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
                 <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No modificar este elemento y continuar.</small></span></label>
