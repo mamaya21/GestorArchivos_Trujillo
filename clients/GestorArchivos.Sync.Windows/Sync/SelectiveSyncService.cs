@@ -309,6 +309,24 @@ public sealed class SelectiveSyncService
                         "Se bloqueó el movimiento de carpeta.");
             }
 
+            // Revalidar la evidencia local antes de escribir en remoto.
+            foreach (var file in descendantFiles)
+            {
+                var relative = Path.GetRelativePath(oldPrefix, file.RutaLocal);
+                var newPath = Path.Combine(destination, relative);
+                var baseline = baselines.Single(x =>
+                    x.SyncItemId == file.SyncItemId &&
+                    x.RemoteFileId == file.ArchivoRemotoId);
+                if (!File.Exists(newPath))
+                    throw new InvalidOperationException(
+                        $"Desapareció un archivo de la carpeta movida: '{newPath}'.");
+                ValidatePathWithoutLinks(newPath);
+                if (!HashesEqual(await HashLocalAsync(newPath,
+                        cancellationToken), baseline.LocalHash))
+                    throw new InvalidOperationException(
+                        $"Cambió un archivo de la carpeta movida: '{newPath}'.");
+            }
+
             if (remote.CarpetaPadreId != targetParent)
                 await _api.MoveRemoteFolderAsync(remote.Id, targetParent,
                     cancellationToken);
