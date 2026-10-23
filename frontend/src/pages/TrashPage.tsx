@@ -18,6 +18,12 @@ interface TrashFile {
   fechaEliminacion: string
 }
 
+type TrashItem = TrashFolder | TrashFile
+
+function itemKey(item: TrashItem) {
+  return `${item.type}:${item.id}`
+}
+
 interface TrashContents {
   folders: TrashFolder[]
   files: TrashFile[]
@@ -32,6 +38,9 @@ export default function TrashPage() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selected, setSelected] = useState<string[]>([])
+  const [processing, setProcessing] = useState(false)
+  const [notice, setNotice] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -40,6 +49,8 @@ export default function TrashPage() {
     try {
       const result = await apiRequest<TrashContents>('/trash')
       setData(result)
+      const available = new Set([...result.folders, ...result.files].map(itemKey))
+      setSelected(previous => previous.filter(key => available.has(key)))
     } catch (err) {
       setError(getError(err))
     } finally {
@@ -59,67 +70,90 @@ export default function TrashPage() {
     x.nombre.toLowerCase().includes(search.toLowerCase()),
   )
 
-  async function restoreFolder(item: TrashFolder) {
-    try {
-      await apiRequest(`/trash/folders/${item.id}/restore`, {
-        method: 'POST',
-      })
+  const visibleItems: TrashItem[] = [...folders, ...files]
+  const selectedItems: TrashItem[] = [...data.folders, ...data.files]
+    .filter(item => selected.includes(itemKey(item)))
+  const allVisibleSelected = visibleItems.length > 0 &&
+    visibleItems.every(item => selected.includes(itemKey(item)))
 
-      await load()
-    } catch (err) {
-      alert(getError(err))
-    }
+  function toggle(item: TrashItem) {
+    const key = itemKey(item)
+    setSelected(previous => previous.includes(key)
+      ? previous.filter(value => value !== key)
+      : [...previous, key])
   }
 
-  async function restoreFile(item: TrashFile) {
-    try {
-      await apiRequest(`/trash/files/${item.id}/restore`, {
-        method: 'POST',
-      })
-
-      await load()
-    } catch (err) {
-      alert(getError(err))
-    }
+  function toggleAll() {
+    const keys = visibleItems.map(itemKey)
+    setSelected(previous => keys.every(key => previous.includes(key))
+      ? previous.filter(key => !keys.includes(key))
+      : Array.from(new Set([...previous, ...keys])))
   }
 
-  async function deleteFolder(item: TrashFolder) {
-    if (
-      !confirm(
-        `¿Eliminar definitivamente la carpeta "${item.nombre}" y su contenido? Esta acción no se puede deshacer.`,
-      )
-    ) {
-      return
-    }
+  async function execute(items: TrashItem[], action: 'restore' | 'delete') {
+    if (processing || !items.length) return
+    if (action === 'delete' && !confirm(
+      `¿Eliminar definitivamente ${items.length} elemento(s) y el contenido de sus carpetas? Esta acción no se puede deshacer.`
+    )) return
+
+    setProcessing(true)
+    setError('')
+    setNotice('')
+    const failed: string[] = []
+    const failedKeys: string[] = []
+    let succeeded = 0
+
+    // Reintentar carpetas pendientes cuando la restauración de su padre
+    // permita completar una operación posterior.
+    let pending = [...items].sort((a, b) =>
+      a.type === b.type ? 0 : a.type === 'folder' ? -1 : 1)
+    const attempts = action === 'restore' ? pending.length : 1
 
     try {
-      await apiRequest(`/trash/folders/${item.id}`, {
-        method: 'DELETE',
-      })
+      for (let pass = 0; pass < attempts && pending.length; pass++) {
+        const retry: typeof pending = []
+        let progress = false
+        for (const item of pending) {
+          const url = `/trash/${item.type === 'folder' ? 'folders' : 'files'}/${item.id}`
+          try {
+            await apiRequest(action === 'restore' ? `${url}/restore` : url, {
+              method: action === 'restore' ? 'POST' : 'DELETE',
+            })
+            succeeded++
+            progress = true
+          } catch (err) {
+            if (action === 'restore' && pass < attempts - 1) {
+              retry.push(item)
+            } else {
+              failedKeys.push(itemKey(item))
+              failed.push(`${item.nombre}: ${getError(err)}`)
+            }
+          }
+        }
+        pending = retry
+        if (!progress) {
+          // No seguir reintentando errores permanentes.
+          for (const item of pending) {
+            failedKeys.push(itemKey(item))
+            failed.push(`${item.nombre}: no se pudo completar la restauración.`)
+          }
+          break
+        }
+      }
 
-      await load()
-    } catch (err) {
-      alert(getError(err))
-    }
-  }
-
-  async function deleteFile(item: TrashFile) {
-    if (
-      !confirm(
-        `¿Eliminar definitivamente "${item.nombre}"? Esta acción no se puede deshacer.`,
-      )
-    ) {
-      return
-    }
-
-    try {
-      await apiRequest(`/trash/files/${item.id}`, {
-        method: 'DELETE',
-      })
-
-      await load()
-    } catch (err) {
-      alert(getError(err))
+      setSelected(failedKeys)
+      setNotice(`${succeeded} de ${items.length} elementos procesados correctamente.`)
+      if (failed.length) setError(failed.join('\n'))
+      try {
+        const result = await apiRequest<TrashContents>('/trash')
+        setData(result)
+        const available = new Set([...result.folders, ...result.files].map(itemKey))
+        setSelected(previous => previous.filter(key => available.has(key)))
+      } catch (err) {
+        setError(previous => [previous, getError(err)].filter(Boolean).join('\n'))
+      }
+    } finally {
+      setProcessing(false)
     }
   }
 
@@ -143,11 +177,28 @@ export default function TrashPage() {
       </div>
 
       {error && (
-        <div className="error-message">
+        <div className="error-message" style={{ whiteSpace: 'pre-wrap' }}>
           {error}
         </div>
       )}
 
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '12px 0' }}>
+        <label>
+          <input type="checkbox" checked={allVisibleSelected}
+            disabled={loading || processing || !visibleItems.length}
+            onChange={toggleAll} />
+          {' '}Seleccionar todos los visibles
+        </label>
+        <span>{selectedItems.length} seleccionados</span>
+        <button type="button" disabled={processing || !selectedItems.length}
+          onClick={() => void execute(selectedItems, 'restore')}>Restaurar seleccionados</button>
+        <button type="button" disabled={processing || !selectedItems.length}
+          onClick={() => void execute(selectedItems, 'delete')}>Eliminar seleccionados definitivamente</button>
+        <button type="button" disabled={processing || !selectedItems.length}
+          onClick={() => setSelected([])}>Deseleccionar</button>
+      </div>
+      {notice && <div role="status">{notice}</div>}
+      {processing && <div>Procesando elementos...</div>}
       <div className="explorer">
         <div className="trash-header">
           <span>Nombre</span>
@@ -163,6 +214,9 @@ export default function TrashPage() {
             {folders.map((item) => (
               <div className="trash-row" key={`folder-${item.id}`}>
                 <div className="item-name">
+                  <input type="checkbox" checked={selected.includes(itemKey(item))}
+                    disabled={processing} aria-label={`Seleccionar ${item.nombre}`}
+                    onChange={() => toggle(item)} />
                   <span className="item-icon">📁</span>
                   {item.nombre}
                 </div>
@@ -174,14 +228,16 @@ export default function TrashPage() {
                 <div className="row-actions">
                   <button
                     type="button"
-                    onClick={() => restoreFolder(item)}
+                    disabled={processing}
+                    onClick={() => void execute([item], 'restore')}
                   >
                     Restaurar
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => deleteFolder(item)}
+                    disabled={processing}
+                    onClick={() => void execute([item], 'delete')}
                   >
                     Eliminar definitivamente
                   </button>
@@ -192,6 +248,9 @@ export default function TrashPage() {
             {files.map((item) => (
               <div className="trash-row" key={`file-${item.id}`}>
                 <div className="item-name">
+                  <input type="checkbox" checked={selected.includes(itemKey(item))}
+                    disabled={processing} aria-label={`Seleccionar ${item.nombre}`}
+                    onChange={() => toggle(item)} />
                   <span className="item-icon">📄</span>
                   {item.nombre}
                 </div>
@@ -203,14 +262,16 @@ export default function TrashPage() {
                 <div className="row-actions">
                   <button
                     type="button"
-                    onClick={() => restoreFile(item)}
+                    disabled={processing}
+                    onClick={() => void execute([item], 'restore')}
                   >
                     Restaurar
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => deleteFile(item)}
+                    disabled={processing}
+                    onClick={() => void execute([item], 'delete')}
                   >
                     Eliminar definitivamente
                   </button>
