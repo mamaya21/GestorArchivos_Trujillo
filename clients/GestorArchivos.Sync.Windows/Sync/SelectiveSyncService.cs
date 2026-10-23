@@ -173,7 +173,6 @@ public sealed class SelectiveSyncService
                 (selection.Kind == 1 && IsDescendantPath(x.RutaLocal, oldPath))).ToList();
             var associatedFiles = descendants.Where(x => x.Tipo == SyncItemType.File &&
                 x.ArchivoRemotoId.HasValue).ToList();
-            if (associatedFiles.Count == 0) continue; // No trustworthy identity evidence.
             if (selection.Kind == 0 && associatedFiles.Count != 1) continue;
             var candidates = selection.Kind == 1
                 ? Directory.EnumerateDirectories(parent).ToList()
@@ -211,6 +210,55 @@ public sealed class SelectiveSyncService
                     }
                 }
                 if (valid) verified.Add(candidate);
+            }
+            // Fallback: some previously uploaded files have no active per-file
+            // mapping or baseline. Verify the entire direct-file set against
+            // the remote folder by name, size and SHA-256, never by name alone.
+            if (verified.Count == 0 && selection.Kind == 1 &&
+                item.CarpetaRemotaId is Guid rootFolderId)
+            {
+                var remoteDirectFiles = snapshot.Files
+                    .Where(x => x.CarpetaId == rootFolderId).ToList();
+                var remoteDirectFolders = snapshot.Folders
+                    .Where(x => x.CarpetaPadreId == rootFolderId).ToList();
+                if (remoteDirectFiles.Count > 0 && remoteDirectFolders.Count == 0 &&
+                    remoteDirectFiles.All(x => !string.IsNullOrWhiteSpace(x.HashSha256)))
+                {
+                    foreach (var candidate in candidates)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (IsReparsePoint(candidate) ||
+                            items.Any(x => !descendants.Contains(x) &&
+                                PathsEqual(x.RutaLocal, candidate)) ||
+                            selections.Any(x => PathsEqual(x.Path, candidate)))
+                            continue;
+                        ValidatePathWithoutLinks(candidate);
+                        var localFiles = Directory.EnumerateFiles(candidate).ToList();
+                        if (Directory.EnumerateDirectories(candidate).Any() ||
+                            localFiles.Count != remoteDirectFiles.Count)
+                            continue;
+                        var verifiedFiles = true;
+                        foreach (var remoteFile in remoteDirectFiles)
+                        {
+                            var localFile = localFiles.SingleOrDefault(x =>
+                                NamesEqual(Path.GetFileName(x), remoteFile.Nombre));
+                            if (localFile is null ||
+                                new FileInfo(localFile).Length != remoteFile.TamanoBytes)
+                            {
+                                verifiedFiles = false;
+                                break;
+                            }
+                            ValidatePathWithoutLinks(localFile);
+                            if (!HashesEqual(await HashLocalAsync(localFile, cancellationToken),
+                                    remoteFile.HashSha256))
+                            {
+                                verifiedFiles = false;
+                                break;
+                            }
+                        }
+                        if (verifiedFiles) verified.Add(candidate);
+                    }
+                }
             }
             if (verified.Count != 1)
                 continue; // Ambiguous or deleted: stop safely, never create a new root.
