@@ -86,14 +86,50 @@ public partial class Form1 : Form
             Location = new Point(2, 42), AutoSize = true
         });
 
+        var toolbarHost = new Panel { Dock = DockStyle.Fill };
         var toolbar = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false, AutoScroll = true
+            WrapContents = false, AutoScroll = false, Padding = Padding.Empty
         };
         toolbar.Controls.Add(CreateButton("Carpeta", (_, _) => AddFolder(), true, "folder"));
         toolbar.Controls.Add(CreateButton("Archivos", (_, _) => AddFiles(), true, "file"));
         toolbar.Controls.Add(CreateButton("Quitar", (_, _) => RemoveSelection(), false, "remove"));
+
+        var refresh = new Button
+        {
+            Dock = DockStyle.Right, Width = 46, Height = 39,
+            Margin = Padding.Empty, Text = "", FlatStyle = FlatStyle.Flat,
+            BackColor = Color.White, ForeColor = Accent,
+            Cursor = Cursors.Hand, TabStop = true,
+            AccessibleName = "Actualizar selecciones",
+            AccessibleDescription = "Recargar las selecciones desde el sincronizador"
+        };
+        refresh.FlatAppearance.BorderColor = Border;
+        refresh.FlatAppearance.BorderSize = 1;
+        refresh.Click += (_, _) => RefreshExternalSelections(force: true);
+        refresh.Paint += (_, e) =>
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var pen = new Pen(Accent, 2.4f)
+            {
+                StartCap = LineCap.Round, EndCap = LineCap.Round
+            };
+            var center = new PointF(refresh.ClientSize.Width / 2f,
+                                    refresh.ClientSize.Height / 2f);
+            var rect = new RectangleF(center.X - 9, center.Y - 9, 18, 18);
+            e.Graphics.DrawArc(pen, rect, 42, 285);
+            using var arrow = new SolidBrush(Accent);
+            e.Graphics.FillPolygon(arrow, new[]
+            {
+                new PointF(center.X + 10, center.Y - 10),
+                new PointF(center.X + 10, center.Y - 1),
+                new PointF(center.X + 2, center.Y - 5)
+            });
+        };
+        toolbarHost.Controls.Add(toolbar);
+        toolbarHost.Controls.Add(refresh);
+        refresh.BringToFront();
 
         var listPanel = new Panel
         {
@@ -156,7 +192,7 @@ public partial class Form1 : Form
         footer.Controls.Add(save, 1, 0);
 
         shell.Controls.Add(heading, 0, 0);
-        shell.Controls.Add(toolbar, 0, 1);
+        shell.Controls.Add(toolbarHost, 0, 1);
         shell.Controls.Add(listPanel, 0, 2);
         shell.Controls.Add(footer, 0, 3);
         Controls.Add(shell);
@@ -628,12 +664,22 @@ public partial class Form1 : Form
         }
     }
 
-    private void RefreshExternalSelections()
+    private void RefreshExternalSelections(bool force = false)
     {
-        if (_dirty || _removals.Count != 0 || !File.Exists(SharedConfigPath))
+        if (_dirty || _removals.Count != 0)
+        {
+            if (force)
+                MessageBox.Show("Hay cambios sin guardar. Guarda o descarta los cambios antes de actualizar.",
+                    "Actualizar selecciones", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
+        }
+        if (!File.Exists(SharedConfigPath))
+        {
+            if (force) RefreshList();
+            return;
+        }
         var modified = File.GetLastWriteTimeUtc(SharedConfigPath);
-        if (modified <= _lastSharedWriteUtc) return;
+        if (!force && modified <= _lastSharedWriteUtc) return;
         try
         {
             var saved = JsonSerializer.Deserialize<List<SyncSelection>>(
