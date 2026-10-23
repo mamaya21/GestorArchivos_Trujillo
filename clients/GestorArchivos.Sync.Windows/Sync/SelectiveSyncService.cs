@@ -30,6 +30,33 @@ public sealed class SelectiveSyncService
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "selection-guard.txt");
 
+    private static readonly string RootIdentityPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "root-identities.json");
+
+    private static async Task<Dictionary<string, string>> LoadRootIdentitiesAsync(CancellationToken ct)
+    {
+        if (!File.Exists(RootIdentityPath))
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var content = await File.ReadAllTextAsync(RootIdentityPath, ct);
+        return new Dictionary<string, string>(
+            JsonSerializer.Deserialize<Dictionary<string, string>>(content) ??
+            new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static async Task SaveRootIdentitiesAsync(
+        Dictionary<string, string> identities, CancellationToken ct)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(RootIdentityPath)!);
+        var temporary = RootIdentityPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(identities), ct);
+            File.Move(temporary, RootIdentityPath, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
     private static readonly string SelectionsPath = Path.Combine(
         Environment.GetFolderPath(
             Environment.SpecialFolder.CommonApplicationData),
@@ -154,11 +181,23 @@ public sealed class SelectiveSyncService
         var items = await _api.GetItemsAsync(cancellationToken);
         var baselines = await _baselines.LoadAsync(cancellationToken);
         var changed = false;
+        var rootIdentities = await LoadRootIdentitiesAsync(cancellationToken);
+        var identitiesChanged = false;
         foreach (var selection in selections)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (selection.Kind == 1 ? Directory.Exists(selection.Path) : File.Exists(selection.Path))
+            {
+                var currentIdentity = WindowsFileIdentity.TryGet(selection.Path, selection.Kind == 1);
+                if (currentIdentity is not null &&
+                    (!rootIdentities.TryGetValue(selection.Path, out var savedIdentity) ||
+                     !string.Equals(savedIdentity, currentIdentity, StringComparison.Ordinal)))
+                {
+                    rootIdentities[selection.Path] = currentIdentity;
+                    identitiesChanged = true;
+                }
                 continue;
+            }
 
             var oldPath = Path.GetFullPath(selection.Path);
             var parent = Path.GetDirectoryName(oldPath);
@@ -182,8 +221,25 @@ public sealed class SelectiveSyncService
                 ? Directory.EnumerateDirectories(parent).ToList()
                 : Directory.EnumerateFiles(parent).ToList();
             var verified = new List<string>();
+            // The NTFS volume + file ID survives a rename and disambiguates
+            // directories containing identical files. It is checked first.
+            if (rootIdentities.TryGetValue(oldPath, out var expectedIdentity))
+            {
+                foreach (var candidate in candidates)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (IsReparsePoint(candidate) ||
+                        items.Any(x => !descendants.Contains(x) && PathsEqual(x.RutaLocal, candidate)) ||
+                        selections.Any(x => PathsEqual(x.Path, candidate)))
+                        continue;
+                    var candidateIdentity = WindowsFileIdentity.TryGet(candidate, selection.Kind == 1);
+                    if (string.Equals(candidateIdentity, expectedIdentity, StringComparison.Ordinal))
+                        verified.Add(candidate);
+                }
+            }
+            // Legacy selections without a stored ID retain conservative content matching.
             // An empty mapping is not proof of identity: never accept every sibling.
-            if (associatedFiles.Count > 0)
+            if (verified.Count == 0 && !rootIdentities.ContainsKey(oldPath) && associatedFiles.Count > 0)
             foreach (var candidate in candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -220,7 +276,7 @@ public sealed class SelectiveSyncService
             // Fallback: some previously uploaded files have no active per-file
             // mapping or baseline. Verify the entire direct-file set against
             // the remote folder by name, size and SHA-256, never by name alone.
-            if (verified.Count != 1 && selection.Kind == 1 &&
+            if (verified.Count != 1 && !rootIdentities.ContainsKey(oldPath) && selection.Kind == 1 &&
                 item.CarpetaRemotaId is Guid rootFolderId)
             {
                 var remoteDirectFiles = snapshot.Files
@@ -326,8 +382,17 @@ public sealed class SelectiveSyncService
                     : Path.Combine(destination, Path.GetRelativePath(oldPath, baseline.LocalPath));
             await _baselines.SaveAsync(updatedBaselines, cancellationToken);
             selection.Path = destination;
+            if (rootIdentities.Remove(oldPath)) identitiesChanged = true;
+            var destinationIdentity = WindowsFileIdentity.TryGet(destination, selection.Kind == 1);
+            if (destinationIdentity is not null)
+            {
+                rootIdentities[destination] = destinationIdentity;
+                identitiesChanged = true;
+            }
             changed = true;
         }
+        if (identitiesChanged)
+            await SaveRootIdentitiesAsync(rootIdentities, cancellationToken);
         if (changed)
         {
             var directory = Path.GetDirectoryName(SelectionsPath)!;
