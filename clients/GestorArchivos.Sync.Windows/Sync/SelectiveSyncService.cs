@@ -440,8 +440,10 @@ public sealed class SelectiveSyncService
                 var remote = snapshot.Files.SingleOrDefault(x =>
                     x.Id == item.ArchivoRemotoId);
                 if (remote is null ||
-                    remote.Version != baseline.RemoteVersion ||
-                    !HashesEqual(remote.HashSha256, baseline.RemoteHash))
+                    !HashesEqual(remote.HashSha256, baseline.RemoteHash) ||
+                    (remote.Version != baseline.RemoteVersion &&
+                     !(remote.CarpetaId == folderId &&
+                       NamesEqual(remote.Nombre, newName))))
                     throw new InvalidOperationException(
                         $"El archivo remoto de '{item.RutaLocal}' cambió. " +
                         "Se bloqueó el movimiento para proteger el historial.");
@@ -472,8 +474,10 @@ public sealed class SelectiveSyncService
             var remote = (await _api.GetSnapshotAsync(cancellationToken))
                 .Files.SingleOrDefault(x => x.Id == plan.Item.ArchivoRemotoId);
             if (remote is null ||
-                remote.Version != plan.Baseline.RemoteVersion ||
-                !HashesEqual(remote.HashSha256, plan.Baseline.RemoteHash))
+                !HashesEqual(remote.HashSha256, plan.Baseline.RemoteHash) ||
+                (remote.Version != plan.Baseline.RemoteVersion &&
+                 !(remote.CarpetaId == plan.FolderId &&
+                   NamesEqual(remote.Nombre, plan.NewName))))
                 throw new InvalidOperationException(
                     $"El archivo remoto cambió antes de mover '{plan.Destination}'.");
 
