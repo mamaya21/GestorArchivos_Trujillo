@@ -1460,7 +1460,20 @@ public sealed class SelectiveSyncService
                     IsDescendantPath(x.RutaLocal, previousPath))
                     .OrderBy(x => x.RutaLocal.Length).ToList();
 
-                Directory.Move(previousPath, localChild);
+                try
+                {
+                    Directory.Move(previousPath, localChild);
+                }
+                catch (IOException ex) when (
+                    (ex.HResult & 0xFFFF) is 5 or 32 or 33)
+                {
+                    // Windows Explorer, antivirus or an open file can hold a
+                    // temporary handle. Retry on the next sync cycle without
+                    // changing any mapping or reporting a fatal sync failure.
+                    Console.WriteLine(
+                        $"[SyncFolder] Movimiento local pendiente (carpeta en uso o acceso denegado): {previousPath} => {localChild}. {ex.Message}");
+                    continue;
+                }
 
                 foreach (var descendant in descendantsToMove)
                 {
@@ -1521,6 +1534,12 @@ public sealed class SelectiveSyncService
                 localChild,
                 cancellationToken);
         }
+
+        // A remote rename/move changes the physical folder list. Do not
+        // process its previous name as a newly created local folder.
+        localFolders = Directory.EnumerateDirectories(localFolderPath)
+            .ToDictionary(p => Path.GetFileName(p)!, p => p,
+                NormalizedNameComparer.Instance);
 
         // LOCAL -> REMOTO: CARPETAS
         foreach (var localFolder in localFolders)
