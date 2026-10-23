@@ -14,19 +14,22 @@ public sealed class LocalStateStore : ILocalStateStore
     private readonly string _statePath;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public LocalStateStore()
+    public LocalStateStore() : this(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        SyncConstants.ApplicationName,
+        SyncConstants.SyncDirectoryName,
+        SyncConstants.StateFileName))
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(
-                Environment.SpecialFolder.CommonApplicationData),
-            SyncConstants.ApplicationName,
-            SyncConstants.SyncDirectoryName);
+    }
 
-        Directory.CreateDirectory(directory);
+    // Permite pruebas aisladas sin acceder al estado real de ProgramData.
+    public LocalStateStore(string statePath)
+    {
+        if (string.IsNullOrWhiteSpace(statePath))
+            throw new ArgumentException("La ruta de estado es obligatoria.", nameof(statePath));
 
-        _statePath = Path.Combine(
-            directory,
-            SyncConstants.StateFileName);
+        _statePath = Path.GetFullPath(statePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
     }
 
     public async Task<SyncRuntimeState> LoadAsync(
