@@ -309,6 +309,64 @@ public sealed class SyncReconnectRegressionTests
     }
 
     [Fact]
+    public async Task SyncUpload_ReconnectAfterFirstChunk_ContinuesMissingChunk()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync(
+            "/api/sync/devices/register",
+            new { name = $"ChunkReconnect-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"resume-{Guid.NewGuid():N}.bin";
+        var localPath = $"C:\\SyncReplay\\{name}";
+        var size = 64 * 1024 * 1024 + 7;
+
+        Guid uploadId;
+        using (var first = SyncClient(token))
+        {
+            using var init = await first.PostAsJsonAsync(
+                "/api/sync/uploads/initialize",
+                new { folderId = root, fileName = name, fileSize = size });
+            await RequireSuccess(init);
+            using var json = JsonDocument.Parse(await init.Content.ReadAsStringAsync());
+            uploadId = json.RootElement.GetProperty("uploadId").GetGuid();
+
+            using var chunk = new ByteArrayContent(new byte[64 * 1024 * 1024]);
+            using var sent = await first.PutAsync(
+                $"/api/sync/uploads/{uploadId}/chunks/0", chunk);
+            Assert.Equal(HttpStatusCode.NoContent, sent.StatusCode);
+        }
+
+        // A fresh HTTP client models a dropped connection after the first chunk.
+        using (var reconnected = SyncClient(token))
+        {
+            using var status = await reconnected.GetAsync(
+                $"/api/sync/uploads/{uploadId}/status");
+            await RequireSuccess(status);
+            using var json = JsonDocument.Parse(await status.Content.ReadAsStringAsync());
+            var received = json.RootElement.GetProperty("receivedChunks")
+                .EnumerateArray().Select(x => x.GetInt32()).ToArray();
+            Assert.Equal(new[] { 0 }, received);
+
+            using var chunk = new ByteArrayContent(new byte[] { 1, 2, 3, 4, 5, 6, 7 });
+            using var sent = await reconnected.PutAsync(
+                $"/api/sync/uploads/{uploadId}/chunks/1", chunk);
+            Assert.Equal(HttpStatusCode.NoContent, sent.StatusCode);
+
+            using var completed = await reconnected.PostAsJsonAsync(
+                $"/api/sync/files/atomic/uploads/{uploadId}/complete",
+                new { localPath });
+            await RequireSuccess(completed);
+            using var result = JsonDocument.Parse(await completed.Content.ReadAsStringAsync());
+            Assert.NotEqual(Guid.Empty,
+                result.RootElement.GetProperty("remoteFileId").GetGuid());
+        }
+    }
+
+    [Fact]
     public async Task SyncUpload_CompletedChunks_CreateFileAndMappingAtomically()
     {
         using var owner = Client();
