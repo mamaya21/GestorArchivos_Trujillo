@@ -74,6 +74,63 @@ public sealed class LocalStateRestartTests
         Assert.False(File.Exists(path + ".tmp"));
     }
 
+    [Fact]
+    public async Task InterruptedSave_WithCanceledToken_PreservesLastCommittedCheckpoint()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "state.json");
+        var device = Guid.NewGuid();
+        var store = new LocalStateStore(path);
+
+        await store.SaveAsync(new SyncRuntimeState
+        {
+            DeviceId = device,
+            LastChangeId = 40,
+            IsInitialSyncCompleted = true
+        });
+
+        using var interrupted = new CancellationTokenSource();
+        interrupted.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            store.SaveAsync(new SyncRuntimeState
+            {
+                DeviceId = device,
+                LastChangeId = 41,
+                IsInitialSyncCompleted = false
+            }, interrupted.Token));
+
+        var recovered = await new LocalStateStore(path).LoadAsync();
+        Assert.Equal(device, recovered.DeviceId);
+        Assert.Equal(40, recovered.LastChangeId);
+        Assert.True(recovered.IsInitialSyncCompleted);
+    }
+
+    [Fact]
+    public async Task Restart_AfterRepeatedSameCheckpoint_DoesNotAdvanceCursor()
+    {
+        using var temp = new TemporaryDirectory();
+        var path = Path.Combine(temp.Path, "state.json");
+        var device = Guid.NewGuid();
+        var first = new LocalStateStore(path);
+
+        await first.SaveAsync(new SyncRuntimeState
+        {
+            DeviceId = device,
+            LastChangeId = 91,
+            IsInitialSyncCompleted = true
+        });
+
+        var restarted = new LocalStateStore(path);
+        var state = await restarted.LoadAsync();
+        await restarted.SaveAsync(state);
+
+        var nextRestart = await new LocalStateStore(path).LoadAsync();
+        Assert.Equal(device, nextRestart.DeviceId);
+        Assert.Equal(91, nextRestart.LastChangeId);
+        Assert.True(nextRestart.IsInitialSyncCompleted);
+    }
+
     private sealed class TemporaryDirectory : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(
