@@ -357,9 +357,38 @@ public class FoldersController : ControllerBase
                 return BadRequest(new { message = "No se puede mover una carpeta dentro de sí misma o sus descendientes." });
             ancestor = await _dbContext.Carpetas.AsNoTracking().Where(x => x.Id == ancestor.Value).Select(x => x.CarpetaPadreId).FirstOrDefaultAsync(cancellationToken);
         }
-        if (await _dbContext.Carpetas.AnyAsync(x => x.Id != id && x.CarpetaPadreId == destination.Id && x.Nombre == folder.Nombre && !x.EnPapelera, cancellationToken) ||
-            await _dbContext.Archivos.AnyAsync(x => x.CarpetaId == destination.Id && x.Nombre == folder.Nombre && x.Estado == EstadoArchivo.Activo, cancellationToken))
-            return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+        // Conservar ambos genera un nombre disponible sin alterar el elemento existente.
+        // Omitir deja el origen intacto y permite continuar una selección múltiple.
+        async Task<bool> ExistsAsync(string name) =>
+            await _dbContext.Carpetas.AnyAsync(x => x.Id != id && x.CarpetaPadreId == destination.Id && x.Nombre == name && !x.EnPapelera, cancellationToken) ||
+            await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == destination.Id && x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
+
+        var finalName = folder.Nombre;
+        if (await ExistsAsync(finalName))
+        {
+            if (request.ConflictResolution == "skip")
+                return Ok(new { skipped = true });
+
+            if (request.ConflictResolution != "keepBoth")
+                return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+
+            var extension = string.Empty;
+            var stem = finalName;
+            var found = false;
+            for (var suffix = 1; suffix <= 10000; suffix++)
+            {
+                var candidate = $"{stem} ({suffix}){extension}";
+                if (!FileNameValidator.TryValidate(candidate, out _, out _))
+                    return Conflict(new { message = "No se pudo generar un nombre válido." });
+                if (await ExistsAsync(candidate)) continue;
+                finalName = candidate;
+                found = true;
+                break;
+            }
+            if (!found)
+                return Conflict(new { message = "No hay un nombre disponible en el destino." });
+        }
+        folder.Nombre = finalName;
         var oldParentId = folder.CarpetaPadreId.Value;
         folder.CarpetaPadreId = destination.Id;
         folder.FechaModificacion = DateTime.UtcNow;
@@ -510,4 +539,4 @@ public sealed record CreateFolderRequest(
 
 public sealed record RenameFolderRequest(
     string Name);
-public sealed record MoveFolderRequest(Guid DestinationFolderId);
+public sealed record MoveFolderRequest(Guid DestinationFolderId, string? ConflictResolution = null);
