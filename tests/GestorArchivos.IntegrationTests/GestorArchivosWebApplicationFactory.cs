@@ -10,8 +10,8 @@ namespace GestorArchivos.IntegrationTests;
 public sealed class GestorArchivosWebApplicationFactory
     : WebApplicationFactory<Program>
 {
-    public const string TestDatabaseName =
-        "GestorArchivosDb_IntegrationTests";
+    public static readonly string TestDatabaseName =
+        $"GestorArchivosDb_IntegrationTests_{Guid.NewGuid():N}";
 
     public string StorageRoot { get; } =
         Path.Combine(
