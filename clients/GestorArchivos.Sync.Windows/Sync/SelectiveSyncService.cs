@@ -326,6 +326,11 @@ public sealed class SelectiveSyncService
                 continue;
             }
             record.Observations++;
+            // Folder identity is not persisted independently of its path.
+            // A rename of an empty folder or one with changed files is
+            // indistinguishable from deletion. Never auto-trash in that case.
+            if (selection.Kind == 1)
+                continue;
             if (record.Observations < 3 ||
                 now - record.FirstSeenUtc < TimeSpan.FromSeconds(15))
                 continue;
