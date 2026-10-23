@@ -10,6 +10,7 @@ public partial class Form1 : Form
     private readonly ListBox _list = new();
     private readonly Label _status = new();
     private readonly List<RemovalRequest> _removals = new();
+    private readonly List<string> _restorations = new();
 
     private static readonly string ConfigPath = Path.Combine(
         Environment.GetFolderPath(
@@ -24,6 +25,8 @@ public partial class Form1 : Form
         "GestorArchivos",
         "Sync",
         "selections.json");
+
+    private static readonly string RestorePath = Path.Combine(Path.GetDirectoryName(SharedConfigPath)!, "restore-requests.json");
 
     private static readonly string RemovalPath = Path.Combine(Path.GetDirectoryName(SharedConfigPath)!, "removal-requests.json");
 
@@ -86,6 +89,7 @@ public partial class Form1 : Form
         toolbar.Controls.Add(CreateButton("Carpeta", (_, _) => AddFolder(), true, "folder"));
         toolbar.Controls.Add(CreateButton("Archivos", (_, _) => AddFiles(), true, "file"));
         toolbar.Controls.Add(CreateButton("Quitar", (_, _) => RemoveSelection(), false, "remove"));
+        toolbar.Controls.Add(CreateButton("Restaurar", (_, _) => RestoreSelection(), false, "folder"));
 
         var listPanel = new Panel
         {
@@ -453,6 +457,30 @@ public partial class Form1 : Form
             RefreshList();
     }
 
+    private void RestoreSelection()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Selecciona la carpeta local cuya copia web deseas restaurar desde la papelera.",
+            ShowNewFolderButton = false,
+            UseDescriptionForTitle = true
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+        var path = Path.GetFullPath(dialog.SelectedPath);
+        if (_selections.Any(x => IsSamePath(x.Path, path)))
+        {
+            MessageBox.Show("Primero retira la selección activa antes de restaurar.",
+                "Gestor de Archivos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (!_restorations.Contains(path, StringComparer.OrdinalIgnoreCase))
+            _restorations.Add(path);
+        AddSelection(path, SelectionKind.Folder);
+        MessageBox.Show("Restauración preparada. Pulsa Guardar cambios para ejecutarla.",
+            "Gestor de Archivos", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
     private void RemoveSelection()
     {
         var index = _list.SelectedIndex;
@@ -548,6 +576,16 @@ public partial class Form1 : Form
                         pending.Add(removal);
                 WriteAtomically(RemovalPath, JsonSerializer.Serialize(pending));
             }
+            if (_restorations.Count > 0)
+            {
+                var pendingRestores = File.Exists(RestorePath)
+                    ? JsonSerializer.Deserialize<List<string>>(File.ReadAllText(RestorePath)) ?? new()
+                    : new List<string>();
+                foreach (var restore in _restorations)
+                    if (!pendingRestores.Contains(restore, StringComparer.OrdinalIgnoreCase))
+                        pendingRestores.Add(restore);
+                WriteAtomically(RestorePath, JsonSerializer.Serialize(pendingRestores));
+            }
             WriteAtomically(SharedConfigPath, json);
 
             // Conservar también la configuración
@@ -562,6 +600,7 @@ public partial class Form1 : Form
                 File.Delete(pendingPath);
 
             _removals.Clear();
+            _restorations.Clear();
             MessageBox.Show(
                 "Selecciones guardadas correctamente.",
                 "Gestor de Archivos",
