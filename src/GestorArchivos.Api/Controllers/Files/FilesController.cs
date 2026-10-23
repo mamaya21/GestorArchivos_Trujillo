@@ -42,9 +42,16 @@ public class FilesController : ControllerBase
 
     private Task<bool> IsSelectorManagedFileAsync(Guid fileId, CancellationToken cancellationToken)
     {
-        return _dbContext.ElementosSync.AsNoTracking().AnyAsync(
-            x => x.Activo && x.Tipo == TipoElementoSync.Archivo &&
-                 x.ArchivoRemotoId == fileId, cancellationToken);
+        return (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join file in _dbContext.Archivos.AsNoTracking()
+                on item.ArchivoRemotoId equals file.Id
+            where item.Activo && item.Tipo == TipoElementoSync.Archivo &&
+                  file.Id == fileId && file.CarpetaId == device.CarpetaRaizId
+            select item.Id
+        ).AnyAsync(cancellationToken);
     }
 
     public sealed record CreateEmptyFileRequest(Guid FolderId, string Name);
