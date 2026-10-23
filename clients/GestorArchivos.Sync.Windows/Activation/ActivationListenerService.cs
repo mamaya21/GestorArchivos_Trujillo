@@ -12,6 +12,9 @@ public sealed class ActivationListenerService : BackgroundService
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "paused.flag");
 
+    private static readonly string SyncDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync");
     private readonly IActivationService _activationService;
     private readonly SyncCancellationCoordinator _cancellation;
     private readonly IDeviceRegistrationService _registrations;
@@ -207,6 +210,19 @@ public sealed class ActivationListenerService : BackgroundService
                 RootFolderName = request.RootFolderName,
                 Token = request.Token
             };
+
+            if (request.StartFresh)
+            {
+                // El nuevo dispositivo nunca debe heredar selecciones del anterior.
+                // Bloquear el motor hasta que el usuario guarde una nueva selección.
+                Directory.CreateDirectory(SyncDirectory);
+                await File.WriteAllTextAsync(
+                    Path.Combine(SyncDirectory, "selection-pending.flag"),
+                    request.DeviceId.ToString(), cancellationToken);
+                await File.WriteAllTextAsync(
+                    Path.Combine(SyncDirectory, "selections.json"),
+                    "[]", cancellationToken);
+            }
 
             await _activationService.ActivateAsync(
                 device,
