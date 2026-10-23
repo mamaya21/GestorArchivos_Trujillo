@@ -121,6 +121,15 @@ public sealed class SyncApiClient : ISyncApiClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public async Task<bool> IsItemTrashedAsync(Guid syncItemId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"api/sync/items/{syncItemId}/trash-status", cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return document.RootElement.GetProperty("trashed").GetBoolean();
+    }
+
     public async Task DetachTrashedItemAsync(Guid syncItemId, CancellationToken cancellationToken = default)
     {
         using var response = await _httpClient.PostAsync(
