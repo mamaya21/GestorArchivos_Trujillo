@@ -59,7 +59,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<SyncChangesResponse>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "La API devolviÛ una respuesta Sync vacÌa.");
+                "La API devolvi√≥ una respuesta Sync vac√≠a.");
     }
 
     public async Task<IReadOnlyList<SyncItem>> GetItemsAsync(
@@ -85,7 +85,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<SyncSnapshot>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un snapshot vacÌo.");
+                "El servidor devolvi√≥ un snapshot vac√≠o.");
     }
 
     public async Task<SyncItem> RegisterItemAsync(
@@ -105,7 +105,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<SyncItem>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un elemento de sincronizaciÛn vacÌo.");
+                "El servidor devolvi√≥ un elemento de sincronizaci√≥n vac√≠o.");
     }
 
     public async Task UpdateItemPathAsync(
@@ -134,6 +134,26 @@ public sealed class SyncApiClient : ISyncApiClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public async Task RenameRemoteFileAsync(
+        Guid fileId, string name,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync(
+            $"api/sync/files/{fileId}/rename",
+            new { name }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task MoveRemoteFileAsync(
+        Guid fileId, Guid destinationFolderId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync(
+            $"api/sync/files/{fileId}/move",
+            new { destinationFolderId }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     public async Task DeleteItemAsync(
         Guid syncItemId,
         CancellationToken cancellationToken = default)
@@ -151,7 +171,7 @@ public sealed class SyncApiClient : ISyncApiClient
     {
         if (parentFolderId == Guid.Empty)
             throw new ArgumentException(
-                "El identificador de la carpeta padre no es v·lido.",
+                "El identificador de la carpeta padre no es v√°lido.",
                 nameof(parentFolderId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(folderName);
@@ -166,7 +186,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFolder>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una carpeta remota vacÌa.");
+                "El servidor devolvi√≥ una carpeta remota vac√≠a.");
     }
 
     public async Task<RemoteFile> CreateRemoteFileAsync(
@@ -198,7 +218,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFile>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un archivo remoto vacÌo.");
+                "El servidor devolvi√≥ un archivo remoto vac√≠o.");
     }
 
     public async Task<RemoteFile> GetRemoteFileAsync(
@@ -213,7 +233,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFile>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un archivo remoto vacÌo.");
+                "El servidor devolvi√≥ un archivo remoto vac√≠o.");
     }
 
     public async Task<RemoteFolder> GetRemoteFolderAsync(
@@ -228,7 +248,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFolder>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una carpeta remota vacÌa.");
+                "El servidor devolvi√≥ una carpeta remota vac√≠a.");
     }
 
     public async Task<SyncDevice?> GetCurrentDeviceAsync(
@@ -262,7 +282,7 @@ public sealed class SyncApiClient : ISyncApiClient
     {
         if (parentFolderId == Guid.Empty)
             throw new ArgumentException(
-                "El identificador de la carpeta padre no es v·lido.",
+                "El identificador de la carpeta padre no es v√°lido.",
                 nameof(parentFolderId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(folderName);
@@ -278,7 +298,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<AtomicSyncFolderResult>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una respuesta de creaciÛn atÛmica vacÌa.");
+                "El servidor devolvi√≥ una respuesta de creaci√≥n at√≥mica vac√≠a.");
     }
 
     public async Task<AtomicSyncFileResult> CreateAtomicRemoteFileAsync(
@@ -291,7 +311,7 @@ public sealed class SyncApiClient : ISyncApiClient
     {
         if (folderId == Guid.Empty)
             throw new ArgumentException(
-                "Carpeta remota inv·lida.", nameof(folderId));
+                "Carpeta remota inv√°lida.", nameof(folderId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
@@ -317,7 +337,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<AtomicSyncFileResult>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una respuesta de archivo atÛmico vacÌa.");
+                "El servidor devolvi√≥ una respuesta de archivo at√≥mico vac√≠a.");
     }
 
     private static async Task EnsureSuccessAsync(
