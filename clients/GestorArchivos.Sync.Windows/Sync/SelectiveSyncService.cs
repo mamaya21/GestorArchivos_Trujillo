@@ -178,6 +178,8 @@ public sealed class SelectiveSyncService
                 ? Directory.EnumerateDirectories(parent).ToList()
                 : Directory.EnumerateFiles(parent).ToList();
             var verified = new List<string>();
+            // An empty mapping is not proof of identity: never accept every sibling.
+            if (associatedFiles.Count > 0)
             foreach (var candidate in candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -214,7 +216,7 @@ public sealed class SelectiveSyncService
             // Fallback: some previously uploaded files have no active per-file
             // mapping or baseline. Verify the entire direct-file set against
             // the remote folder by name, size and SHA-256, never by name alone.
-            if (verified.Count == 0 && selection.Kind == 1 &&
+            if (verified.Count != 1 && selection.Kind == 1 &&
                 item.CarpetaRemotaId is Guid rootFolderId)
             {
                 var remoteDirectFiles = snapshot.Files
@@ -224,6 +226,9 @@ public sealed class SelectiveSyncService
                 if (remoteDirectFiles.Count > 0 && remoteDirectFolders.Count == 0 &&
                     remoteDirectFiles.All(x => !string.IsNullOrWhiteSpace(x.HashSha256)))
                 {
+                    // A failed baseline verification must not contaminate the
+                    // independent remote-manifest identity check.
+                    verified.Clear();
                     foreach (var candidate in candidates)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
