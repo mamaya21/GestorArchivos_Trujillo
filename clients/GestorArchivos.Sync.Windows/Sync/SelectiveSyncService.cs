@@ -1844,14 +1844,19 @@ public sealed class SelectiveSyncService
                 throw new InvalidOperationException("Solicitud de retirada inválida.");
 
             var path = Path.GetFullPath(request.Path);
-            // Nunca retirar contenido que volvió a seleccionarse, ni contenido
-            // que contiene una selección todavía activa.
+            // Si se volvió a seleccionar antes de ejecutar la retirada,
+            // la nueva decisión cancela la solicitud antigua. No bloquear
+            // la sincronización ni enviar contenido activo a la papelera.
             if (selections.Any(x => PathsEqual(x.Path, path) ||
                 (request.Kind == 1 && Path.GetFullPath(x.Path).StartsWith(
                     Path.TrimEndingDirectorySeparator(path) + Path.DirectorySeparatorChar,
                     StringComparison.OrdinalIgnoreCase))))
-                throw new InvalidOperationException(
-                    $"No se puede enviar a la papelera una selección activa: {path}");
+            {
+                requests.Remove(request);
+                await File.WriteAllTextAsync(RemovalPath,
+                    JsonSerializer.Serialize(requests), cancellationToken);
+                continue;
+            }
 
             var items = await _api.GetItemsAsync(cancellationToken);
             var matches = items.Where(x => PathsEqual(x.RutaLocal, path) &&
