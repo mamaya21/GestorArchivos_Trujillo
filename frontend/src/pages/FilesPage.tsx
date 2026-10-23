@@ -785,7 +785,7 @@ export default function FilesPage() {
           fileIds: entry.kind === 'files' ? [entry.id] : [],
           folderIds: entry.kind === 'folders' ? [entry.id] : [],
         }
-        let resolution: 'skip' | 'keepBoth' | 'replace' | undefined = applyToAll ?? undefined
+        let resolution: 'skip' | 'keepBoth' | 'replace' | undefined = applyToAll === 'replace' && entry.kind === 'folders' ? undefined : applyToAll ?? undefined
         let result: { skipped?: boolean } | undefined
         try {
           result = await apiRequest('/files/copy-selection', {
