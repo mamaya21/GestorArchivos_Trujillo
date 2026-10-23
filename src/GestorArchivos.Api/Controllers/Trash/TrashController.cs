@@ -236,6 +236,19 @@ public sealed class TrashController : ControllerBase
             return Forbid();
         }
 
+        // Una raíz retirada del selector es una carpeta histórica independiente.
+        // Si se volvió a sincronizar la misma ruta, su nueva raíz activa tiene
+        // prioridad y la copia anterior se restaura con nombre distinto.
+        var historicalSelectorRoot = rootFolder.CarpetaPadreId.HasValue &&
+            await _dbContext.ElementosSync.AsNoTracking().AnyAsync(
+                x => !x.Activo && x.Tipo == TipoElementoSync.Carpeta &&
+                     x.CarpetaRemotaId == rootFolder.Id &&
+                     _dbContext.DispositivosSync.Any(d =>
+                         d.Id == x.DispositivoId &&
+                         d.CarpetaRaizId == rootFolder.CarpetaPadreId.Value),
+                cancellationToken);
+        var effectiveResolution = historicalSelectorRoot ? "keepBoth" : conflictResolution;
+
         var duplicateRoot =
             await _dbContext.Carpetas
                 .AsNoTracking()
@@ -248,8 +261,8 @@ public sealed class TrashController : ControllerBase
                         !x.EnPapelera,
                     cancellationToken);
 
-        if (duplicateRoot && conflictResolution == "skip") return Ok(new { skipped = true });
-        if (duplicateRoot && conflictResolution == "keepBoth")
+        if (duplicateRoot && effectiveResolution == "skip") return Ok(new { skipped = true });
+        if (duplicateRoot && effectiveResolution == "keepBoth")
         {
             var baseName = rootFolder.Nombre;
             var found = false;
@@ -344,7 +357,7 @@ public sealed class TrashController : ControllerBase
                             x.Nombre == folder.Nombre,
                         cancellationToken);
 
-            if (duplicate && conflictResolution == "keepBoth")
+            if (duplicate && effectiveResolution == "keepBoth")
             {
                 var originalName = folder.Nombre;
                 var renamed = false;
