@@ -25,6 +25,8 @@ public class ApplicationDbContext
 
     public DbSet<Archivo> Archivos => Set<Archivo>();
 
+    public DbSet<ArchivoVersion> ArchivoVersiones => Set<ArchivoVersion>();
+
     public DbSet<Grupo> Grupos => Set<Grupo>();
 
     public DbSet<GrupoUsuario> GruposUsuarios => Set<GrupoUsuario>();
