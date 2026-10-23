@@ -10,6 +10,9 @@ public partial class Form1 : Form
     private readonly ListBox _list = new();
     private readonly Label _status = new();
     private readonly List<RemovalRequest> _removals = new();
+    private bool _dirty;
+    private DateTime _lastSharedWriteUtc;
+    private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 3000 };
 
     private static readonly string ConfigPath = Path.Combine(
         Environment.GetFolderPath(
@@ -38,6 +41,11 @@ public partial class Form1 : Form
         Icon = CreateAppIcon();
         BuildInterface();
         LoadSelections();
+        _lastSharedWriteUtc = File.Exists(SharedConfigPath)
+            ? File.GetLastWriteTimeUtc(SharedConfigPath) : DateTime.MinValue;
+        _refreshTimer.Tick += (_, _) => RefreshExternalSelections();
+        _refreshTimer.Start();
+        FormClosed += (_, _) => _refreshTimer.Dispose();
     }
 
     private static readonly Color Ink = Color.FromArgb(31, 41, 65);
@@ -448,6 +456,7 @@ public partial class Form1 : Form
             Path = fullPath,
             Kind = kind
         });
+        if (refresh) _dirty = true;
 
         if (refresh)
             RefreshList();
@@ -465,6 +474,7 @@ public partial class Form1 : Form
         if (choice == DialogResult.Cancel) return;
         _removals.Add(new RemovalRequest { Path = selected.Path, Kind = (int)selected.Kind, SendToTrash = choice == DialogResult.Yes });
         _selections.RemoveAt(index);
+        _dirty = true;
         RefreshList();
     }
 
@@ -561,6 +571,8 @@ public partial class Form1 : Form
                 File.Delete(pendingPath);
 
             _removals.Clear();
+            _dirty = false;
+            _lastSharedWriteUtc = File.GetLastWriteTimeUtc(SharedConfigPath);
             MessageBox.Show(
                 "Selecciones guardadas correctamente.",
                 "Gestor de Archivos",
@@ -614,6 +626,32 @@ public partial class Form1 : Form
             if (File.Exists(temporaryPath))
                 File.Delete(temporaryPath);
         }
+    }
+
+    private void RefreshExternalSelections()
+    {
+        if (_dirty || _removals.Count != 0 || !File.Exists(SharedConfigPath))
+            return;
+        var modified = File.GetLastWriteTimeUtc(SharedConfigPath);
+        if (modified <= _lastSharedWriteUtc) return;
+        try
+        {
+            var saved = JsonSerializer.Deserialize<List<SyncSelection>>(
+                File.ReadAllText(SharedConfigPath));
+            if (saved is null) return;
+            _selections.Clear();
+            foreach (var selection in saved)
+                if (selection is not null &&
+                    (selection.Kind == SelectionKind.File ||
+                     selection.Kind == SelectionKind.Folder))
+                    AddSelection(selection.Path, selection.Kind,
+                        refresh: false, validateExistence: false);
+            _lastSharedWriteUtc = modified;
+            RefreshList();
+        }
+        catch (IOException) { /* Atomic writer may be replacing the file. */ }
+        catch (UnauthorizedAccessException) { /* Retry on next tick. */ }
+        catch (JsonException) { /* Retry on next tick. */ }
     }
 
     private void LoadSelections()
