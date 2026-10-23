@@ -1602,21 +1602,70 @@ public sealed class SelectiveSyncService
                 if (mappedElsewhere is not null &&
                     !PathsEqual(mappedElsewhere.RutaLocal, localPath))
                 {
-                    throw new InvalidOperationException(
-                        $"El archivo remoto ya está asociado a '{mappedElsewhere.RutaLocal}'.");
+                    // The server moved/renamed this same remote file. Preserve
+                    // its SyncItem and version history rather than downloading
+                    // it as a new file or failing on the old local mapping.
+                    var baseline = (await _baselines.LoadAsync(cancellationToken))
+                        .SingleOrDefault(x =>
+                            x.SyncItemId == mappedElsewhere.SyncItemId &&
+                            x.RemoteFileId == remoteFile.Id);
+                    if (baseline is null ||
+                        !HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
+                        !HashesEqual(baseline.RemoteHash, remoteFile.HashSha256))
+                        throw new InvalidOperationException(
+                            $"Movimiento remoto sin baseline confiable: '{mappedElsewhere.RutaLocal}'.");
+
+                    if (File.Exists(localPath) || Directory.Exists(localPath))
+                        throw new InvalidOperationException(
+                            $"Destino local ocupado: '{localPath}'.");
+
+                    if (File.Exists(mappedElsewhere.RutaLocal))
+                    {
+                        ValidatePathWithoutLinks(mappedElsewhere.RutaLocal);
+                        if (!HashesEqual(
+                            await HashLocalAsync(mappedElsewhere.RutaLocal, cancellationToken),
+                            baseline.LocalHash))
+                            throw new InvalidOperationException(
+                                $"El origen local cambió: '{mappedElsewhere.RutaLocal}'.");
+
+                        File.Move(mappedElsewhere.RutaLocal, localPath);
+                    }
+                    else if (!File.Exists(localPath))
+                    {
+                        throw new InvalidOperationException(
+                            $"No se encuentra el origen del movimiento: '{mappedElsewhere.RutaLocal}'.");
+                    }
+
+                    await _api.UpdateItemPathAsync(
+                        mappedElsewhere.SyncItemId, localPath, cancellationToken);
+                    baseline.LocalPath = localPath;
+                    baseline.RemoteVersion = remoteFile.Version;
+                    var updatedBaselines = (await _baselines.LoadAsync(cancellationToken)).ToList();
+                    var existingBaseline = updatedBaselines.SingleOrDefault(x =>
+                        x.SyncItemId == mappedElsewhere.SyncItemId &&
+                        x.RemoteFileId == remoteFile.Id);
+                    if (existingBaseline is not null)
+                    {
+                        existingBaseline.LocalPath = localPath;
+                        existingBaseline.RemoteVersion = remoteFile.Version;
+                        await _baselines.SaveAsync(updatedBaselines, cancellationToken);
+                    }
+                    fileItem = mappedElsewhere;
                 }
+                else
+                {
+                    await _download.DownloadAsync(
+                        remoteFile.Id,
+                        localPath,
+                        cancellationToken);
 
-                await _download.DownloadAsync(
-                    remoteFile.Id,
-                    localPath,
-                    cancellationToken);
-
-                fileItem = await _api.RegisterItemAsync(
-                    localPath,
-                    SyncItemType.File,
-                    null,
-                    remoteFile.Id,
-                    cancellationToken);
+                    fileItem = await _api.RegisterItemAsync(
+                        localPath,
+                        SyncItemType.File,
+                        null,
+                        remoteFile.Id,
+                        cancellationToken);
+                }
             }
             else if (fileItem.Tipo != SyncItemType.File ||
                      fileItem.ArchivoRemotoId != remoteFile.Id)
