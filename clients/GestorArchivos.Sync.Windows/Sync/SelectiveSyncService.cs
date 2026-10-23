@@ -22,6 +22,10 @@ public sealed class SelectiveSyncService
 
     private static readonly string RemovalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "removal-requests.json");
 
+    private static readonly string MissingRootsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "missing-roots.json");
+
     private static readonly string SelectionGuardPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "selection-guard.txt");
@@ -80,6 +84,8 @@ public sealed class SelectiveSyncService
                 "El servidor no devolvió una raíz Sync válida.");
 
         await ReconcileSelectedRootRenamesAsync(selections, snapshot, cancellationToken);
+        await ReconcileMissingSelectedRootsAsync(selections, cancellationToken);
+        await ProcessRemovalRequestsAsync(selections, cancellationToken);
 
         foreach (var selection in selections)
         {
@@ -268,6 +274,117 @@ public sealed class SelectiveSyncService
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }
+    }
+
+
+    // Missing roots are quarantined for repeated sync cycles before trashing.
+    // Never infer deletion from a missing parent, unavailable drive, or reparse point.
+    private async Task ReconcileMissingSelectedRootsAsync(
+        List<Selection> selections, CancellationToken cancellationToken)
+    {
+        var pending = File.Exists(MissingRootsPath)
+            ? JsonSerializer.Deserialize<List<MissingRoot>>(
+                await File.ReadAllTextAsync(MissingRootsPath, cancellationToken)) ?? new()
+            : new List<MissingRoot>();
+        var now = DateTime.UtcNow;
+        var items = await _api.GetItemsAsync(cancellationToken);
+        var changed = false;
+        foreach (var selection in selections.ToArray())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var present = selection.Kind == 1
+                ? Directory.Exists(selection.Path) : File.Exists(selection.Path);
+            var record = pending.FirstOrDefault(x =>
+                x.Kind == selection.Kind && PathsEqual(x.Path, selection.Path));
+            if (present)
+            {
+                if (record is not null) pending.Remove(record);
+                continue;
+            }
+
+            var parent = Path.GetDirectoryName(Path.GetFullPath(selection.Path));
+            if (parent is null || !Directory.Exists(parent))
+            {
+                if (record is not null) pending.Remove(record);
+                continue;
+            }
+            ValidatePathWithoutLinks(parent);
+            var drive = new DriveInfo(Path.GetPathRoot(selection.Path)!);
+            if (!drive.IsReady || drive.DriveType is DriveType.Network or DriveType.Removable)
+            {
+                if (record is not null) pending.Remove(record);
+                continue;
+            }
+
+            var matches = items.Where(x => PathsEqual(x.RutaLocal, selection.Path) &&
+                (selection.Kind == 1 ? x.Tipo == SyncItemType.Folder : x.Tipo == SyncItemType.File)).ToList();
+            if (matches.Count != 1 ||
+                (selection.Kind == 1 && !matches[0].CarpetaRemotaId.HasValue) ||
+                (selection.Kind == 0 && !matches[0].ArchivoRemotoId.HasValue))
+                continue;
+
+            if (record is null)
+            {
+                pending.Add(new MissingRoot
+                {
+                    Path = selection.Path,
+                    Kind = selection.Kind,
+                    FirstSeenUtc = now,
+                    Observations = 1
+                });
+                continue;
+            }
+            record.Observations++;
+            if (record.Observations < 3 ||
+                now - record.FirstSeenUtc < TimeSpan.FromMinutes(2))
+                continue;
+
+            // Persist the request before removing the selection. If interrupted,
+            // ProcessRemovalRequestsAsync will resume without losing the remote object.
+            var requests = File.Exists(RemovalPath)
+                ? JsonSerializer.Deserialize<List<RemovalRequest>>(
+                    await File.ReadAllTextAsync(RemovalPath, cancellationToken)) ?? new()
+                : new List<RemovalRequest>();
+            if (!requests.Any(x => PathsEqual(x.Path, selection.Path) &&
+                x.Kind == selection.Kind))
+                requests.Add(new RemovalRequest
+                {
+                    Path = selection.Path,
+                    Kind = selection.Kind,
+                    SendToTrash = true
+                });
+            await WriteJsonAtomicallyAsync(RemovalPath, requests, cancellationToken);
+            selections.Remove(selection);
+            await WriteJsonAtomicallyAsync(SelectionsPath, selections, cancellationToken);
+            pending.Remove(record);
+            changed = true;
+        }
+        await WriteJsonAtomicallyAsync(MissingRootsPath, pending, cancellationToken);
+        if (changed)
+            await SaveSelectionFingerprintAsync(
+                ComputeSelectionFingerprint(selections), cancellationToken);
+    }
+
+    private static async Task WriteJsonAtomicallyAsync<T>(
+        string path, T value, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary,
+                JsonSerializer.Serialize(value), cancellationToken);
+            File.Move(temporary, path, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private sealed class MissingRoot
+    {
+        public string Path { get; set; } = string.Empty;
+        public int Kind { get; set; }
+        public DateTime FirstSeenUtc { get; set; }
+        public int Observations { get; set; }
     }
 
     // Reconciliar renombrados y traslados remotos de archivos mediante su identidad.
