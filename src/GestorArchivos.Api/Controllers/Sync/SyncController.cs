@@ -519,6 +519,31 @@ public class SyncController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("items/{syncItemId:guid}/trash-status")]
+    public async Task<IActionResult> GetTrashStatus(Guid syncItemId, CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (!await _permissionService.HasPermissionAsync(
+                userId, device.RootFolderId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+        var item = await _dbContext.ElementosSync.AsNoTracking().FirstOrDefaultAsync(
+            x => x.Id == syncItemId && x.DispositivoId == deviceId && x.Activo,
+            cancellationToken);
+        if (item is null) return NotFound();
+        bool trashed;
+        if (item.Tipo == TipoElementoSync.Carpeta && item.CarpetaRemotaId.HasValue)
+            trashed = await _dbContext.Carpetas.AnyAsync(
+                x => x.Id == item.CarpetaRemotaId.Value && x.EnPapelera, cancellationToken);
+        else if (item.Tipo == TipoElementoSync.Archivo && item.ArchivoRemotoId.HasValue)
+            trashed = await _dbContext.Archivos.AnyAsync(
+                x => x.Id == item.ArchivoRemotoId.Value && x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
+        else return Conflict(new { message = "Asociación remota inválida." });
+        return Ok(new { trashed });
+    }
+
     [HttpDelete("items/{syncItemId:guid}")]
     public async Task<IActionResult> RemoveItem(
         Guid syncItemId,
