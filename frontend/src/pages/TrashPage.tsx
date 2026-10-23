@@ -139,7 +139,7 @@ export default function TrashPage() {
                   confirmButtonColor: '#2563eb',
                   width: 480,
                   customClass: { popup: 'ga-conflict-dialog' },
-                  html: `<div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+                  html: `<div class="ga-conflict-item"><span class="ga-conflict-item-label">${item.type === 'folder' ? 'Carpeta' : 'Archivo'} con conflicto</span><strong class="ga-conflict-item-name">${item.nombre.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)}</strong><span class="ga-conflict-item-hint">Ya existe un elemento con este nombre en el destino.</span></div><div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
                     <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Restaurar con un nombre diferente.</small></span></label>
                     ${item.type === 'file' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
                     <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No restaurar este elemento y continuar.</small></span></label>
