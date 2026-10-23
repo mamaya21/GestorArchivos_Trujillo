@@ -402,7 +402,7 @@ public sealed class SyncApiClient : ISyncApiClient
             "GestorArchivos", "Sync", "uploads");
         Directory.CreateDirectory(checkpointRoot);
         var key = Convert.ToHexString(SHA256.HashData(
-            Encoding.UTF8.GetBytes(folderId + "|" + localPath)));
+            Encoding.UTF8.GetBytes(_httpClient.BaseAddress + "|" + folderId + "|" + localPath)));
         var checkpointPath = Path.Combine(checkpointRoot, key + ".json");
 
         ResumableCheckpoint? checkpoint = null;
@@ -422,7 +422,14 @@ public sealed class SyncApiClient : ISyncApiClient
         if (checkpoint is not null &&
             (checkpoint.FileSize != size || checkpoint.Hash != hash ||
              checkpoint.FileName != fileName))
+        {
+            using var cancelled = await _httpClient.DeleteAsync(
+                $"api/sync/uploads/{checkpoint.UploadId}", cancellationToken);
+            if (cancelled.StatusCode != HttpStatusCode.NotFound)
+                await EnsureSuccessAsync(cancelled, cancellationToken);
+            File.Delete(checkpointPath);
             checkpoint = null;
+        }
 
         ResumableStatus? status = null;
         if (checkpoint is not null)
@@ -504,6 +511,12 @@ public sealed class SyncApiClient : ISyncApiClient
                 payload, cancellationToken);
             await EnsureSuccessAsync(uploaded, cancellationToken);
         }
+
+        content.Position = start;
+        var finalHash = Convert.ToHexString(
+            await SHA256.HashDataAsync(content, cancellationToken));
+        if (!string.Equals(finalHash, hash, StringComparison.Ordinal))
+            throw new IOException("El archivo local cambió durante la transferencia.");
 
         using var completed = await _httpClient.PostAsJsonAsync(
             $"api/sync/files/atomic/uploads/{checkpoint.UploadId}/complete",
