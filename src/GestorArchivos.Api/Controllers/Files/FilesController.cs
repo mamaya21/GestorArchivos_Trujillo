@@ -839,10 +839,9 @@ public class FilesController : ControllerBase
                     x.Estado == EstadoArchivo.Activo,
                 cancellationToken);
 
-        if (file is null)
+        if (file is null) return NotFound();
         if (await IsSelectorManagedFileAsync(id, cancellationToken))
             return Conflict(new { message = "Este archivo está seleccionado para sincronización. Quítalo primero del selector de este dispositivo." });
-            return NotFound();
 
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
@@ -1024,10 +1023,9 @@ public class FilesController : ControllerBase
                     x.Estado == EstadoArchivo.Activo,
                 cancellationToken);
 
-        if (file is null)
+        if (file is null) return NotFound();
         if (await IsSelectorManagedFileAsync(id, cancellationToken))
             return Conflict(new { message = "Este archivo está seleccionado para sincronización. Quítalo primero del selector de este dispositivo." });
-            return NotFound();
 
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
