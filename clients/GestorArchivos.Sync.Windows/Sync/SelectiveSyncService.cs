@@ -284,6 +284,11 @@ public sealed class SelectiveSyncService
                     $"asociacionesArchivo={associatedFiles.Count}, candidatos={candidates.Count}, " +
                     $"verificados={verified.Count}, carpetaRemota={item.CarpetaRemotaId}, " +
                     $"archivoRemoto={item.ArchivoRemotoId}. Se conserva la selección.");
+                // Give the operator exact, already content-verified paths to
+                // disambiguate. Never choose one using names or ordering.
+                if (verified.Count > 1)
+                    foreach (var match in verified.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                        Console.WriteLine($"[SyncRename] Candidato verificado: {match}");
                 continue; // Ambiguous or deleted: stop safely, never create a new root.
             }
             var destination = verified[0];
