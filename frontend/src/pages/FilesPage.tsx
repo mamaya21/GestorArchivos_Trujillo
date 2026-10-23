@@ -967,7 +967,11 @@ export default function FilesPage() {
     const fileIds = isSelected ? [...selectedFiles] : file ? [file.id] : []
     const multiple = folderIds.length + fileIds.length > 1
     if (file?.selectorManaged && (action === 'rename' || action === 'delete' || action === 'cut')) return
-    if (folder && ((folder.selectorManaged || !folder.carpetaPadreId) && (action === 'rename' || action === 'delete' || action === 'cut') || folder.deviceContainer && (action === 'delete' || action === 'cut'))) return
+    if (folder && (
+      (folder.selectorManaged || (!folder.carpetaPadreId && !folder.deviceContainer)) &&
+      (action === 'rename' || action === 'delete' || action === 'cut') ||
+      folder.deviceContainer && (action === 'delete' || action === 'cut')
+    )) return
     if ((action === 'cut' || action === 'delete') && (folderIds.some(id => folders.some(item => item.id === id && item.selectorManaged)) || fileIds.some(id => files.some(item => item.id === id && item.selectorManaged)))) return
     if (multiple && ['open', 'edit', 'rename'].includes(action)) return
     if (action === 'paste') {
