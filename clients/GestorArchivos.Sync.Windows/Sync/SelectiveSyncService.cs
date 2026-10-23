@@ -143,10 +143,7 @@ public sealed class SelectiveSyncService
         await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
     }
 
-    // Reconciliar cambios de nombre realizados en la web sin descargar una
-    // segunda copia ni dejar una asociación apuntando al nombre anterior.
-    // Los cambios de carpeta remota se mantienen bloqueados hasta contar
-    // con una reconciliación específica de movimientos remotos.
+    // Reconciliar renombrados y traslados remotos de archivos mediante su identidad.
     private async Task ReconcileRemoteFileRenamesAsync(
         IReadOnlyList<Selection> selections,
         CancellationToken cancellationToken)
@@ -176,15 +173,27 @@ public sealed class SelectiveSyncService
                 x.CarpetaRemotaId.HasValue &&
                 PathsEqual(x.RutaLocal, parentPath));
 
-            if (parentMapping?.CarpetaRemotaId != remote.CarpetaId)
-                continue;
+            var destinationParent = parentMapping?.CarpetaRemotaId == remote.CarpetaId
+                ? parentPath
+                : items.Where(x => x.Tipo == SyncItemType.Folder &&
+                    x.CarpetaRemotaId == remote.CarpetaId &&
+                    Directory.Exists(x.RutaLocal))
+                    .Select(x => x.RutaLocal)
+                    .SingleOrDefault();
 
-            if (NamesEqual(Path.GetFileName(oldPath), remote.Nombre))
+            // A destination outside the selected local tree is not managed here.
+            if (destinationParent is null)
                 continue;
 
             ValidateRemoteName(remote.Nombre);
-            var destination = Path.Combine(parentPath, remote.Nombre);
+            var destination = Path.Combine(destinationParent, remote.Nombre);
+            if (PathsEqual(oldPath, destination))
+                continue;
+            if (!IsSelectedItemPath(destination, selections))
+                continue;
+
             ValidatePathWithoutLinks(parentPath);
+            ValidatePathWithoutLinks(destinationParent);
 
             var baseline = baselines.SingleOrDefault(x =>
                 x.SyncItemId == item.SyncItemId &&
