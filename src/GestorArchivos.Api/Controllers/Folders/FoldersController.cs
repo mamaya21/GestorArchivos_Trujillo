@@ -329,6 +329,39 @@ public class FoldersController : ControllerBase
         return NoContent();
     }
 
+    [HttpPut("{id:guid}/move")]
+    public async Task<IActionResult> Move(Guid id, MoveFolderRequest request, CancellationToken cancellationToken)
+    {
+        var folder = await _dbContext.Carpetas.FirstOrDefaultAsync(x => x.Id == id && !x.EnPapelera, cancellationToken);
+        if (folder is null) return NotFound();
+        if (!folder.CarpetaPadreId.HasValue) return BadRequest(new { message = "No se puede mover una carpeta raíz." });
+        var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
+        if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
+        if (folder.CarpetaPadreId == destination.Id) return NoContent();
+        var userId = CurrentUserId();
+        if (!await _permissionService.HasPermissionAsync(userId, folder.Id, PermisoCarpeta.Modificar, cancellationToken) ||
+            !await _permissionService.HasPermissionAsync(userId, folder.CarpetaPadreId.Value, PermisoCarpeta.Modificar, cancellationToken) ||
+            !await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Crear, cancellationToken)) return Forbid();
+        Guid? ancestor = destination.Id;
+        var visited = new HashSet<Guid>();
+        while (ancestor.HasValue)
+        {
+            if (!visited.Add(ancestor.Value) || ancestor.Value == id)
+                return BadRequest(new { message = "No se puede mover una carpeta dentro de sí misma o sus descendientes." });
+            ancestor = await _dbContext.Carpetas.AsNoTracking().Where(x => x.Id == ancestor.Value).Select(x => x.CarpetaPadreId).FirstOrDefaultAsync(cancellationToken);
+        }
+        if (await _dbContext.Carpetas.AnyAsync(x => x.Id != id && x.CarpetaPadreId == destination.Id && x.Nombre == folder.Nombre && !x.EnPapelera, cancellationToken) ||
+            await _dbContext.Archivos.AnyAsync(x => x.CarpetaId == destination.Id && x.Nombre == folder.Nombre && x.Estado == EstadoArchivo.Activo, cancellationToken))
+            return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+        var oldParentId = folder.CarpetaPadreId.Value;
+        folder.CarpetaPadreId = destination.Id;
+        folder.FechaModificacion = DateTime.UtcNow;
+        await _syncChangeService.RegisterAsync(oldParentId, null, folder.Id, "FOLDER_MOVED", cancellationToken: cancellationToken);
+        await _syncChangeService.RegisterAsync(destination.Id, null, folder.Id, "FOLDER_MOVED", cancellationToken: cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> MoveToTrash(
         Guid id,
@@ -450,3 +483,4 @@ public sealed record CreateFolderRequest(
 
 public sealed record RenameFolderRequest(
     string Name);
+public sealed record MoveFolderRequest(Guid DestinationFolderId);
