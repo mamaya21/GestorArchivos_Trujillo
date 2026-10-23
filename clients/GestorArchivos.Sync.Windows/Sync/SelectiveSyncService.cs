@@ -312,9 +312,23 @@ public sealed class SelectiveSyncService
             if (remote.CarpetaPadreId != targetParent)
                 await _api.MoveRemoteFolderAsync(remote.Id, targetParent,
                     cancellationToken);
+
+            remote = (await _api.GetSnapshotAsync(cancellationToken))
+                .Folders.SingleOrDefault(x => x.Id == folder.CarpetaRemotaId);
+            if (remote is null || remote.CarpetaPadreId != targetParent)
+                throw new InvalidOperationException(
+                    $"No se verificó el movimiento de '{destination}'.");
+
             if (!NamesEqual(remote.Nombre, newName))
                 await _api.RenameRemoteFolderAsync(remote.Id, newName,
                     cancellationToken);
+
+            remote = (await _api.GetSnapshotAsync(cancellationToken))
+                .Folders.SingleOrDefault(x => x.Id == folder.CarpetaRemotaId);
+            if (remote is null || remote.CarpetaPadreId != targetParent ||
+                !NamesEqual(remote.Nombre, newName))
+                throw new InvalidOperationException(
+                    $"No se verificó el renombrado de '{destination}'.");
 
             var affected = items.Where(x =>
                 PathsEqual(x.RutaLocal, oldPrefix) ||
