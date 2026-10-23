@@ -15,6 +15,10 @@ This file is the source of truth for regression scope. Never mark a scenario aut
 - `tests/GestorArchivos.IntegrationTests`: API, sync and orphan cleanup test classes; requires isolated SQL Server Express (`.\\SQLEXPRESS`), see factory source.
 - CI: .NET solution build, frontend TypeScript/Vite build, frontend lint. These are quality gates, **not** proof of functional behavior.
 
+## New automated security regressions (pending execution)
+
+- `AnonymousSecurityRegressionTests.cs`: 19 anonymous protected reads, 6 anonymous writes, and 19 invalid-bearer reads (44 cases). Requires isolated SQL Express. Tests are committed but **not yet executed**.
+
 ## Remaining coverage to implement
 
 | Area | Required automated assertions | Status |
