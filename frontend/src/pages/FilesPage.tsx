@@ -6,6 +6,7 @@ import {
   useState,
   type DragEvent,
   type MouseEvent,
+  type PointerEvent,
 } from 'react'
 import { apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
@@ -95,6 +96,8 @@ export default function FilesPage() {
     useState<Set<string>>(new Set())
 
   const [copyClipboard, setCopyClipboard] = useState<FileItem | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const touchStart = useRef<{ x: number; y: number } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [treeRefresh, setTreeRefresh] = useState(0)
   const [moveClipboard, setMoveClipboard] = useState<MoveClipboard | null>(null)
@@ -602,6 +605,33 @@ export default function FilesPage() {
       setCopyClipboard(null)
     } catch (error) {
       await showFileError(error)
+    }
+  }
+
+  function cancelLongPress() {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    longPressTimer.current = null
+    touchStart.current = null
+  }
+
+  function touchMenu(kind: ContextMenuState['kind'], file?: FileItem, folder?: Folder) {
+    return {
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        if (event.pointerType !== 'touch' || (event.target as HTMLElement).closest('button,input')) return
+        cancelLongPress()
+        const x = event.clientX, y = event.clientY
+        touchStart.current = { x, y }
+        longPressTimer.current = setTimeout(() => {
+          setContextMenu({ x: Math.min(x, window.innerWidth - 220), y: Math.min(y, window.innerHeight - 360), kind, file, folder })
+          longPressTimer.current = null
+        }, 550)
+      },
+      onPointerMove: (event: PointerEvent<HTMLElement>) => {
+        if (touchStart.current && Math.hypot(event.clientX - touchStart.current.x, event.clientY - touchStart.current.y) > 12) cancelLongPress()
+      },
+      onPointerUp: cancelLongPress,
+      onPointerCancel: cancelLongPress,
+      onPointerLeave: cancelLongPress,
     }
   }
 
@@ -1446,7 +1476,7 @@ export default function FilesPage() {
             onMove={(event, folderId) => handleInternalDrop(event, folderId)}
             onContext={(event, folder) => showContextMenu(event, 'folder', undefined, folder)} />
         </aside>
-      <div className="explorer" onContextMenu={(event) => {
+      <div className="explorer" {...touchMenu('background')} onContextMenu={(event) => {
         if (event.target === event.currentTarget) showContextMenu(event, 'background')
       }}>
         <div className="explorer-header explorer-header-select">
@@ -1511,6 +1541,7 @@ export default function FilesPage() {
                 className="explorer-row explorer-row-select"
                 key={folder.id}
                 onContextMenu={(event) => showContextMenu(event, 'folder', undefined, folder)}
+                {...touchMenu('folder', undefined, folder)}
                 draggable={!moving && !upload}
                 onDragStart={(event) => handleInternalDragStart(event, 'folder', folder.id)}
                 onDragOver={(event) => { if (draggedItem) { event.preventDefault(); event.stopPropagation() } }}
@@ -1540,7 +1571,7 @@ export default function FilesPage() {
                   onClick={() => openFolder(folder)}
                 >
                   <span className="item-icon">
-                    📁
+                    <FolderGlyph />
                   </span>
                   {folder.nombre}
                 </button>
@@ -1554,7 +1585,7 @@ export default function FilesPage() {
                   )}
                 </span>
 
-                <span className="row-more" title="Clic derecho para ver las acciones">⋯</span>
+                <button type="button" className="row-more" aria-label="Acciones de carpeta" onClick={(event) => showContextMenu(event, 'folder', undefined, folder)}>⋯</button>
               </div>
             ))}
 
@@ -1563,6 +1594,7 @@ export default function FilesPage() {
                 className="explorer-row explorer-row-select"
                 key={file.id}
                 onContextMenu={(event) => showContextMenu(event, 'file', file)}
+                {...touchMenu('file', file)}
                 draggable={!moving && !upload}
                 onDragStart={(event) => handleInternalDragStart(event, 'file', file.id)}
                 onDoubleClick={() =>
@@ -1591,7 +1623,7 @@ export default function FilesPage() {
                   }}
                 >
                   <span className="item-icon">
-                    {fileIcon(file)}
+                    <FileGlyph extension={file.extension} />
                   </span>
 
                   {file.nombre}
@@ -1608,7 +1640,7 @@ export default function FilesPage() {
                   )}
                 </span>
 
-                <span className="row-more" title="Clic derecho para ver las acciones">⋯</span>
+                <button type="button" className="row-more" aria-label="Acciones de archivo" onClick={(event) => showContextMenu(event, 'file', file)}>⋯</button>
               </div>
             ))}
 
@@ -1687,7 +1719,7 @@ function FolderTree({ parentId, depth, refresh, activeId, onNavigate, onMove, on
               else next.add(folder.id)
               return next
             })}>{isOpen ? '▾' : '▸'}</button>
-          <button type="button" className="tree-label" onClick={() => onNavigate(path)}>📁 {folder.nombre}</button>
+          <button type="button" className="tree-label" onClick={() => onNavigate(path)}><FolderGlyph /> {folder.nombre}</button>
         </div>
         {isOpen && <FolderTree parentId={folder.id} depth={depth + 1} refresh={refresh}
           activeId={activeId} onNavigate={onNavigate} onMove={onMove}
@@ -1695,6 +1727,16 @@ function FolderTree({ parentId, depth, refresh, activeId, onNavigate, onMove, on
       </div>
     })}
   </div>
+}
+
+function FolderGlyph() {
+  return <svg className="file-glyph folder-glyph" viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z" /></svg>
+}
+
+function FileGlyph({ extension }: { extension: string }) {
+  const ext = extension.toLowerCase()
+  const type = ext === '.pdf' ? 'pdf' : ['.jpg','.jpeg','.png','.gif','.webp'].includes(ext) ? 'image' : ['.doc','.docx'].includes(ext) ? 'word' : ['.xls','.xlsx','.csv'].includes(ext) ? 'sheet' : ['.ppt','.pptx'].includes(ext) ? 'slide' : ['.zip','.rar','.7z'].includes(ext) ? 'archive' : 'generic'
+  return <svg className={`file-glyph file-glyph-${type}`} viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5" /><path d="M9 13h6M9 17h6" /></svg>
 }
 
 function sortIndicator(
@@ -1737,40 +1779,6 @@ function formatDate(value: string) {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(date)
-}
-
-function fileIcon(file: FileItem) {
-  const extension = file.extension.toLowerCase()
-
-  if (extension === '.pdf') return '📕'
-
-  if (
-    [
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.gif',
-      '.webp',
-    ].includes(extension)
-  ) {
-    return '🖼️'
-  }
-
-  if (['.doc', '.docx'].includes(extension))
-    return '📘'
-
-  if (
-    ['.xls', '.xlsx', '.csv'].includes(extension)
-  )
-    return '📗'
-
-  if (['.ppt', '.pptx'].includes(extension))
-    return '📙'
-
-  if (['.zip', '.rar', '.7z'].includes(extension))
-    return '🗜️'
-
-  return '📄'
 }
 
 async function showFileError(error: unknown) {
