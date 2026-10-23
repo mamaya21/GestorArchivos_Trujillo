@@ -8,6 +8,7 @@ export interface CurrentUser {
 }
 
 export interface Folder {
+  selectorManaged?: boolean
   id: string
   nombre: string
   carpetaPadreId: string | null
