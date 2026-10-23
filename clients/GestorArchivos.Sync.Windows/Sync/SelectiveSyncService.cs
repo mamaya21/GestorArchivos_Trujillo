@@ -237,11 +237,20 @@ public sealed class SelectiveSyncService
                                 PathsEqual(x.RutaLocal, candidate)) ||
                             selections.Any(x => PathsEqual(x.Path, candidate)))
                             continue;
-                        ValidatePathWithoutLinks(candidate);
-                        var localFiles = Directory.EnumerateFiles(candidate).ToList();
-                        if (Directory.EnumerateDirectories(candidate).Any() ||
-                            localFiles.Count != remoteDirectFiles.Count)
-                            continue;
+                        // Sibling directories may be protected system folders.
+                        // They are not eligible rename candidates; do not abort
+                        // reconciliation because Windows denies their enumeration.
+                        List<string> localFiles;
+                        try
+                        {
+                            ValidatePathWithoutLinks(candidate);
+                            localFiles = Directory.EnumerateFiles(candidate).ToList();
+                            if (Directory.EnumerateDirectories(candidate).Any() ||
+                                localFiles.Count != remoteDirectFiles.Count)
+                                continue;
+                        }
+                        catch (UnauthorizedAccessException) { continue; }
+                        catch (IOException) { continue; }
                         var verifiedFiles = true;
                         foreach (var remoteFile in remoteDirectFiles)
                         {
