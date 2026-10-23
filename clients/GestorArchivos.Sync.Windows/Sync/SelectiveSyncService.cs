@@ -153,7 +153,7 @@ public sealed class SelectiveSyncService
         }
 
         await RefreshBaselineAsync(cancellationToken);
-        await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
+        await SaveSelectionFingerprintAsync(ComputeSelectionFingerprint(selections), cancellationToken);
     }
 
 
