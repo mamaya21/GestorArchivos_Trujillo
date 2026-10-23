@@ -40,6 +40,13 @@ public class FilesController : ControllerBase
         _syncChangeService = syncChangeService;
     }
 
+    private Task<bool> IsSelectorManagedFileAsync(Guid fileId, CancellationToken cancellationToken)
+    {
+        return _dbContext.ElementosSync.AsNoTracking().AnyAsync(
+            x => x.Activo && x.Tipo == TipoElementoSync.Archivo &&
+                 x.ArchivoRemotoId == fileId, cancellationToken);
+    }
+
     public sealed record CreateEmptyFileRequest(Guid FolderId, string Name);
 
     [HttpPost("empty")]
@@ -833,6 +840,8 @@ public class FilesController : ControllerBase
                 cancellationToken);
 
         if (file is null)
+        if (await IsSelectorManagedFileAsync(id, cancellationToken))
+            return Conflict(new { message = "Este archivo está seleccionado para sincronización. Quítalo primero del selector de este dispositivo." });
             return NotFound();
 
         if (!await _permissionService.HasPermissionAsync(
@@ -899,6 +908,8 @@ public class FilesController : ControllerBase
     {
         var file = await _dbContext.Archivos.FirstOrDefaultAsync(x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
         if (file is null) return NotFound();
+        if (await IsSelectorManagedFileAsync(id, cancellationToken))
+            return Conflict(new { message = "Este archivo está seleccionado para sincronización. Quítalo primero del selector de este dispositivo." });
         if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
                 x => x.CarpetaRaizId == request.DestinationFolderId, cancellationToken))
             return Conflict(new { message = "El destino principal de sincronización se administra desde el selector." });
@@ -1014,6 +1025,8 @@ public class FilesController : ControllerBase
                 cancellationToken);
 
         if (file is null)
+        if (await IsSelectorManagedFileAsync(id, cancellationToken))
+            return Conflict(new { message = "Este archivo está seleccionado para sincronización. Quítalo primero del selector de este dispositivo." });
             return NotFound();
 
         if (!await _permissionService.HasPermissionAsync(
