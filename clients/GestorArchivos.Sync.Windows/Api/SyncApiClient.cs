@@ -121,13 +121,6 @@ public sealed class SyncApiClient : ISyncApiClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
-    public async Task RestoreSelectedFolderAsync(string localPath, CancellationToken cancellationToken = default)
-    {
-        using var response = await _httpClient.PostAsJsonAsync(
-            "api/sync/restore-selection", new { localPath }, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-    }
-
     public async Task DetachTrashedItemAsync(Guid syncItemId, CancellationToken cancellationToken = default)
     {
         using var response = await _httpClient.PostAsync(
