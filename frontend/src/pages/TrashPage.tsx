@@ -148,7 +148,6 @@ export default function TrashPage() {
                     resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
                     all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#trash-all')?.checked),
                   }),
-                }),
                 })
                 if (choice.isDismissed) {
                   setNotice(`${succeeded} restaurado(s) antes de cancelar.`)
