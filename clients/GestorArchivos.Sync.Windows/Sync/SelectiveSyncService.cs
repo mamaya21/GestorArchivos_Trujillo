@@ -1866,16 +1866,30 @@ public sealed class SelectiveSyncService
                     $"No existe una asociación única para retirar: {path}");
 
             var item = matches[0];
-            if (request.Kind == 0 && item.ArchivoRemotoId.HasValue)
+            try
             {
-                // La API comprueba dispositivo, permisos y pertenencia a la raíz.
-                await _api.TrashSelectedFileAsync(item.ArchivoRemotoId.Value, cancellationToken);
+                if (request.Kind == 0 && item.ArchivoRemotoId.HasValue)
+                    await _api.TrashSelectedFileAsync(item.ArchivoRemotoId.Value, cancellationToken);
+                else if (request.Kind == 1 && item.CarpetaRemotaId.HasValue)
+                    await _api.TrashSelectedFolderAsync(item.CarpetaRemotaId.Value, cancellationToken);
+                else
+                    throw new InvalidOperationException($"Asociación remota inválida: {path}");
             }
-            else if (request.Kind == 1 && item.CarpetaRemotaId.HasValue)
+            catch (SyncApiException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                await _api.TrashSelectedFolderAsync(item.CarpetaRemotaId.Value, cancellationToken);
+                // El DELETE no es idempotente en la API actual: devuelve 404 si
+                // un intento anterior ya movió el objeto a la papelera.
+                // No tratar cualquier 404 como éxito: el servidor verifica
+                // explícitamente la identidad y el estado en papelera.
+                await _api.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
             }
-            else throw new InvalidOperationException($"Asociación remota inválida: {path}");
+
+            // Si el traslado se confirmó ahora, desactivar también la
+            // asociación antigua. La operación exige confirmación de papelera
+            // en el servidor y evita conflictos al volver a seleccionar.
+            var remaining = await _api.GetItemsAsync(cancellationToken);
+            if (remaining.Any(x => x.SyncItemId == item.SyncItemId))
+                await _api.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
 
             // Mantener la solicitud hasta que la API haya confirmado el traslado.
             requests.Remove(request);
