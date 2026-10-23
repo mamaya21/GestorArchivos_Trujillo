@@ -105,6 +105,12 @@ public class FoldersController : ControllerBase
             }
         }
 
+        var protectedFileIds = (await _dbContext.ElementosSync.AsNoTracking()
+            .Where(x => x.Activo && x.Tipo == TipoElementoSync.Archivo &&
+                        x.ArchivoRemotoId.HasValue)
+            .Select(x => x.ArchivoRemotoId!.Value)
+            .ToListAsync(cancellationToken)).ToHashSet();
+
         var files = parentId.HasValue
             ? await _dbContext.Archivos
                 .AsNoTracking()
@@ -130,7 +136,13 @@ public class FoldersController : ControllerBase
         {
             parentId,
             folders = visibleFolders,
-            files
+            files = files.Select(file => new
+            {
+                file.Id, file.Nombre, file.Extension, file.TipoContenido,
+                file.TamanoBytes, file.Version, file.FechaCreacion,
+                file.FechaModificacion,
+                selectorManaged = protectedFileIds.Contains(file.Id)
+            })
         });
     }
 
