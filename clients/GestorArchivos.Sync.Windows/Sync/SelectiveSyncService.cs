@@ -103,6 +103,8 @@ public sealed class SelectiveSyncService
         await GuardAgainstUnresolvedLocalMovesAsync(
             selections, cancellationToken);
 
+        await ReconcileRemoteFileRenamesAsync(selections, cancellationToken);
+
         await _mapping.PrepareMappingsAsync(cancellationToken);
         await _mapping.CreateMissingFoldersAsync(cancellationToken);
 
@@ -139,6 +141,111 @@ public sealed class SelectiveSyncService
 
         await RefreshBaselineAsync(cancellationToken);
         await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
+    }
+
+    // Reconciliar cambios de nombre realizados en la web sin descargar una
+    // segunda copia ni dejar una asociación apuntando al nombre anterior.
+    // Los cambios de carpeta remota se mantienen bloqueados hasta contar
+    // con una reconciliación específica de movimientos remotos.
+    private async Task ReconcileRemoteFileRenamesAsync(
+        IReadOnlyList<Selection> selections,
+        CancellationToken cancellationToken)
+    {
+        var items = await _api.GetItemsAsync(cancellationToken);
+        var snapshot = await _api.GetSnapshotAsync(cancellationToken);
+        var baselines = await _baselines.LoadAsync(cancellationToken);
+        var remoteById = snapshot.Files.ToDictionary(x => x.Id);
+
+        foreach (var item in items.Where(x =>
+            x.Tipo == SyncItemType.File && x.ArchivoRemotoId.HasValue))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!IsSelectedItemPath(item.RutaLocal, selections) ||
+                !remoteById.TryGetValue(item.ArchivoRemotoId!.Value,
+                    out var remote))
+                continue;
+
+            var oldPath = Path.GetFullPath(item.RutaLocal);
+            var parentPath = Path.GetDirectoryName(oldPath);
+            if (parentPath is null || !Directory.Exists(parentPath))
+                continue;
+
+            var parentMapping = items.SingleOrDefault(x =>
+                x.Tipo == SyncItemType.Folder &&
+                x.CarpetaRemotaId.HasValue &&
+                PathsEqual(x.RutaLocal, parentPath));
+
+            if (parentMapping?.CarpetaRemotaId != remote.CarpetaId)
+                continue;
+
+            if (NamesEqual(Path.GetFileName(oldPath), remote.Nombre))
+                continue;
+
+            ValidateRemoteName(remote.Nombre);
+            var destination = Path.Combine(parentPath, remote.Nombre);
+            ValidatePathWithoutLinks(parentPath);
+
+            var baseline = baselines.SingleOrDefault(x =>
+                x.SyncItemId == item.SyncItemId &&
+                x.RemoteFileId == remote.Id);
+            if (baseline is null ||
+                !HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
+                !HashesEqual(baseline.RemoteHash, remote.HashSha256))
+                throw new InvalidOperationException(
+                    $"Renombrado remoto sin baseline confiable: '{oldPath}'.");
+
+            if (items.Any(x => x.SyncItemId != item.SyncItemId &&
+                PathsEqual(x.RutaLocal, destination)) ||
+                Directory.Exists(destination))
+                throw new InvalidOperationException(
+                    $"Destino del renombrado remoto ocupado: '{destination}'.");
+
+            // Recuperación tras una interrupción entre File.Move y
+            // UpdateItemPathAsync: nunca sobrescribir el destino.
+            if (File.Exists(oldPath))
+            {
+                ValidatePathWithoutLinks(oldPath);
+                if (File.Exists(destination))
+                    throw new InvalidOperationException(
+                        $"Ambos nombres existen: '{oldPath}' y '{destination}'.");
+
+                if (!HashesEqual(
+                    await HashLocalAsync(oldPath, cancellationToken),
+                    baseline.LocalHash))
+                    throw new InvalidOperationException(
+                        $"El archivo local cambió antes del renombrado: '{oldPath}'.");
+
+                File.Move(oldPath, destination);
+            }
+            else if (!File.Exists(destination))
+            {
+                throw new InvalidOperationException(
+                    $"No se encuentra el archivo para renombrar: '{oldPath}'.");
+            }
+
+            ValidatePathWithoutLinks(destination);
+            if (!HashesEqual(
+                await HashLocalAsync(destination, cancellationToken),
+                baseline.LocalHash))
+                throw new InvalidOperationException(
+                    $"No coincide el contenido del archivo renombrado: '{destination}'.");
+
+            await _api.UpdateItemPathAsync(
+                item.SyncItemId, destination, cancellationToken);
+
+            var updated = (await _baselines.LoadAsync(cancellationToken))
+                .ToList();
+            var previous = updated.SingleOrDefault(x =>
+                x.SyncItemId == item.SyncItemId &&
+                x.RemoteFileId == remote.Id);
+            if (previous is not null)
+            {
+                previous.LocalPath = destination;
+                previous.RemoteVersion = remote.Version;
+                await _baselines.SaveAsync(updated, cancellationToken);
+            }
+        }
     }
 
     private async Task ReconcileLocalFolderMovesAsync(
