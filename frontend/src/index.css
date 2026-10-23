@@ -524,6 +524,99 @@ button:disabled {
   background: #f8fbff;
 }
 
+
+/* PAPELERA: ACCIONES MASIVAS */
+.trash-selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.trash-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 550;
+  color: #334155;
+  cursor: pointer;
+}
+.trash-select-all input,
+.trash-row input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--primary);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.trash-selection-count {
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 650;
+}
+.trash-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-left: auto;
+}
+.trash-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 650;
+  transition: background .15s ease, border-color .15s ease;
+}
+.trash-btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+.trash-btn-primary:hover:not(:disabled) {
+  background: var(--primary-dark);
+}
+.trash-btn-danger {
+  background: var(--danger-soft);
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.trash-btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+.trash-btn-secondary {
+  background: #fff;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+.trash-btn-secondary:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+.trash-btn:focus-visible {
+  outline: 3px solid #93c5fd;
+  outline-offset: 2px;
+}
+@media (max-width: 760px) {
+  .trash-bulk-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
 /* ADMIN */
 
 .admin-layout {
