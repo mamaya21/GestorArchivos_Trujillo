@@ -2681,7 +2681,7 @@ public sealed class SelectiveSyncService
                         else if (version == 1) offset = 24;
                         else continue;
                         var recycledPath = Encoding.Unicode.GetString(bytes, offset,
-                            bytes.Length - offset).TrimEnd('\\0');
+                            bytes.Length - offset).TrimEnd('\0');
                         if (PathsEqual(recycledPath, fullPath))
                         {
                             var payload = Path.Combine(userBin, "$R" + Path.GetFileName(entry)[2..]);
