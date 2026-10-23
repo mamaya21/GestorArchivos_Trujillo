@@ -1,5 +1,5 @@
 using System.IO.Compression;
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using GestorArchivos.Application.Common.Interfaces;
 using GestorArchivos.Application.Common.Security;
