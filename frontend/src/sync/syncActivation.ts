@@ -32,7 +32,7 @@ export async function activateSyncOnThisComputer(reuseDeviceId?: string, reuseDe
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(registration),
+    body: JSON.stringify({ ...registration, startFresh: !reuseDeviceId }),
   })
 
   if (!response.ok) {
