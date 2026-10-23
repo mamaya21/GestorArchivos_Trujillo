@@ -1547,17 +1547,33 @@ export default function FilesPage() {
         const confirm = await Swal.fire({
           icon: 'warning',
           title: 'Desvincular este equipo',
-          input: 'radio',
-          inputOptions: {
-            keep: 'Conservar la carpeta web y poder retomar la sincronización',
-            discard: 'Retirar la carpeta web a Papelera e iniciar desde cero',
+          html: `<p style="font-size:14px">¿Qué deseas hacer con la carpeta <strong>${escapeSyncHtml(linkedHere.rootFolderName)}</strong>?</p>
+            <div id="sync-unlink-options" style="display:grid;gap:10px;text-align:left;margin:18px 0">
+              <label style="display:flex;gap:12px;align-items:flex-start;border:2px solid #6757d8;border-radius:12px;padding:15px;cursor:pointer">
+                <input type="radio" name="sync-unlink-mode" value="keep" checked style="margin-top:5px;accent-color:#6757d8">
+                <span><strong>Conservar carpeta web</strong><br><small>Desvincular ahora y poder retomar después con los mismos archivos remotos.</small></span>
+              </label>
+              <label style="display:flex;gap:12px;align-items:flex-start;border:1px solid #d9dce4;border-radius:12px;padding:15px;cursor:pointer">
+                <input type="radio" name="sync-unlink-mode" value="discard" style="margin-top:5px;accent-color:#6757d8">
+                <span><strong>Iniciar desde cero</strong><br><small>Enviar la carpeta web a Papelera y permitir una nueva selección de carpetas.</small></span>
+              </label>
+            </div>
+            <p style="font-size:12px;color:#64748b">En ambos casos, los archivos locales de Windows se conservan.</p>`,
+          didOpen: () => {
+            const container = document.getElementById('sync-unlink-options')
+            container?.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach(input => {
+              input.addEventListener('change', () => {
+                container.querySelectorAll<HTMLLabelElement>('label').forEach(label => {
+                  label.style.border = label.contains(container.querySelector('input:checked')) ? '2px solid #6757d8' : '1px solid #d9dce4'
+                })
+              })
+            })
           },
-          inputValue: 'keep',
-          inputValidator: (value) => !value ? 'Selecciona qué hacer con la carpeta web.' : undefined,
-          html: '<p>Los archivos y carpetas locales de Windows no se eliminarán.</p>',
+          preConfirm: () => document.querySelector<HTMLInputElement>('input[name="sync-unlink-mode"]:checked')?.value,
           showCancelButton: true,
           confirmButtonText: 'Continuar',
           cancelButtonText: 'Cancelar',
+          width: 560,
         })
         if (!confirm.isConfirmed) return
         if (confirm.value === 'discard') {
@@ -1606,18 +1622,37 @@ export default function FilesPage() {
         let reuseDeviceId: string | undefined
         let reuseDeviceName: string | undefined
         if (previous.length > 0) {
+          const choices = previous.map(device => `
+            <label style="display:flex;gap:12px;align-items:flex-start;border:1px solid #d9dce4;border-radius:12px;padding:15px;cursor:pointer">
+              <input type="radio" name="sync-activation-mode" value="${device.deviceId}" style="margin-top:5px;accent-color:#6757d8">
+              <span><strong>Retomar ${escapeSyncHtml(device.deviceName)}</strong><br>
+              <small>Reutilizar la carpeta ${escapeSyncHtml(device.rootFolderName)} y continuar con los archivos existentes.</small></span>
+            </label>`).join('')
           const choice = await Swal.fire({
             title: 'Configurar sincronización',
-            input: 'select',
-            inputOptions: {
-              new: 'Registrar como equipo nuevo (crear carpeta nueva)',
-              ...Object.fromEntries(previous.map(device => [device.deviceId,
-                `Revincular ${device.deviceName} (conservar carpeta ${device.rootFolderName})`])),
+            html: `<p style="font-size:14px">Selecciona cómo deseas activar la sincronización.</p>
+              <div id="sync-activation-options" style="display:grid;gap:10px;text-align:left;margin:18px 0">
+                <label style="display:flex;gap:12px;align-items:flex-start;border:2px solid #6757d8;border-radius:12px;padding:15px;cursor:pointer">
+                  <input type="radio" name="sync-activation-mode" value="new" checked style="margin-top:5px;accent-color:#6757d8">
+                  <span><strong>Iniciar sincronización nueva</strong><br><small>Crear una carpeta raíz nueva y seleccionar nuevamente qué sincronizar. Las raíces anteriores se conservan.</small></span>
+                </label>
+                ${choices}
+              </div>`,
+            didOpen: () => {
+              const container = document.getElementById('sync-activation-options')
+              container?.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach(input => {
+                input.addEventListener('change', () => {
+                  container.querySelectorAll<HTMLLabelElement>('label').forEach(label => {
+                    label.style.border = label.contains(container.querySelector('input:checked')) ? '2px solid #6757d8' : '1px solid #d9dce4'
+                  })
+                })
+              })
             },
-            inputValue: 'new',
+            preConfirm: () => document.querySelector<HTMLInputElement>('input[name="sync-activation-mode"]:checked')?.value,
             showCancelButton: true,
             confirmButtonText: 'Continuar',
             cancelButtonText: 'Cancelar',
+            width: 580,
           })
           if (!choice.isConfirmed) return
           if (choice.value !== 'new') {
@@ -1625,6 +1660,16 @@ export default function FilesPage() {
             if (!selected) throw new Error('Dispositivo anterior no válido')
             reuseDeviceId = selected.deviceId
             reuseDeviceName = selected.deviceName
+          } else {
+            const confirmNew = await Swal.fire({
+              icon: 'info',
+              title: 'Crear sincronización nueva',
+              text: 'Se creará una nueva carpeta raíz. Las carpetas remotas anteriores no se eliminarán ni se reutilizarán.',
+              showCancelButton: true,
+              confirmButtonText: 'Crear nueva',
+              cancelButtonText: 'Volver',
+            })
+            if (!confirmNew.isConfirmed) return
           }
         }
         await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
