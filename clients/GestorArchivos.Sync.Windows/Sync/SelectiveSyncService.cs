@@ -19,6 +19,8 @@ public sealed class SelectiveSyncService
     private readonly ISyncBaselineStore _baselines;
     private readonly SelectiveSyncMappingService _mapping;
     private bool _suppressDestructiveOperations;
+    private readonly HashSet<string> _reportedMissingFolders =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly string RemovalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "removal-requests.json");
 
@@ -733,9 +735,25 @@ public sealed class SelectiveSyncService
             !Directory.Exists(x.RutaLocal))
             .OrderBy(x => x.RutaLocal.Length).ToList();
 
+        var missingPaths = missing.Select(x => x.RutaLocal)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _reportedMissingFolders.RemoveWhere(x => !missingPaths.Contains(x));
+
         foreach (var folder in missing)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            // A folder removed from the web by another actor no longer has a
+            // remote object to protect. Detach only that obsolete mapping.
+            // A local disappearance alone never authorizes remote deletion.
+            if (!snapshot.Folders.Any(x => x.Id == folder.CarpetaRemotaId))
+            {
+                await _api.DetachTrashedItemAsync(folder.SyncItemId, cancellationToken);
+                folderIdentities.Remove(folder.RutaLocal);
+                await SaveRootIdentitiesAsync(folderIdentities, cancellationToken);
+                _reportedMissingFolders.Remove(folder.RutaLocal);
+                Console.WriteLine($"[SyncFolder] Asociación remota inexistente retirada: {folder.RutaLocal}");
+                continue;
+            }
             // Si un ancestro también desapareció, será él quien actualice
             // todas las rutas descendientes.
             if (missing.Any(x => x.SyncItemId != folder.SyncItemId &&
@@ -815,8 +833,10 @@ public sealed class SelectiveSyncService
                 // An empty folder has no content-based move identity.
                 // Do not abort unrelated sync work, but do not guess a
                 // destination or detach/delete the remote folder either.
-                Console.WriteLine($"[SyncFolder] Carpeta sin archivos verificables: " +
-                    $"{folder.RutaLocal}. Asociación remota conservada.");
+                if (_reportedMissingFolders.Add(folder.RutaLocal))
+                    Console.WriteLine($"[SyncFolder] Carpeta local ausente: " +
+                        $"{folder.RutaLocal}. Podría estar eliminada o renombrada; " +
+                        "se conserva el remoto hasta tener evidencia.");
                 continue;
             }
 
