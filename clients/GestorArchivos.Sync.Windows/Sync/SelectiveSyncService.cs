@@ -898,6 +898,7 @@ public sealed class SelectiveSyncService
                 throw new InvalidOperationException(
                     $"No se sincronizará un enlace o punto de montaje: '{localFolder.Value}'.");
 
+            await EnsureStillSelectedAsync(localFolder.Value, cancellationToken);
             var created = await _api.CreateAtomicRemoteFolderAsync(
                 remoteFolderId,
                 localFolder.Key,
@@ -1104,6 +1105,7 @@ public sealed class SelectiveSyncService
                 localFile.Value,
                 cancellationToken);
 
+            await EnsureStillSelectedAsync(localFile.Value, cancellationToken);
             var created = await _api.CreateAtomicRemoteFileAsync(
                 remoteFolderId,
                 localFile.Key,
@@ -1848,6 +1850,16 @@ public sealed class SelectiveSyncService
         }
     }
 
+
+    private async Task EnsureStillSelectedAsync(
+        string path, CancellationToken cancellationToken)
+    {
+        var current = await LoadSelectionsAsync(cancellationToken);
+        if (!IsSelectedItemPath(path, current))
+            throw new OperationCanceledException(
+                $"La selección fue retirada durante la sincronización: '{path}'.",
+                cancellationToken);
+    }
 
     private async Task ProcessRemovalRequestsAsync(
         IReadOnlyList<Selection> selections, CancellationToken cancellationToken)
