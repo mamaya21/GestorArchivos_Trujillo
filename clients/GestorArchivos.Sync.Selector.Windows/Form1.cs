@@ -38,102 +38,159 @@ public partial class Form1 : Form
         LoadSelections();
     }
 
+    private static readonly Color Ink = Color.FromArgb(31, 41, 65);
+    private static readonly Color Muted = Color.FromArgb(105, 115, 137);
+    private static readonly Color Accent = Color.FromArgb(105, 87, 216);
+    private static readonly Color Surface = Color.FromArgb(247, 248, 252);
+    private static readonly Color Border = Color.FromArgb(225, 228, 237);
+
     private void BuildInterface()
     {
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(15),
-            ColumnCount = 1,
-            RowCount = 4
-        };
+        BackColor = Surface;
+        Font = new Font("Segoe UI", 9.5f);
+        MinimumSize = new Size(720, 470);
+        Width = 900;
+        Height = 580;
 
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 55));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 75));
-
-        var title = new Label
+        var shell = new TableLayoutPanel
         {
-            Text = "Selecciona qué deseas sincronizar",
-            Dock = DockStyle.Fill,
-            Font = new Font(Font.FontFamily, 14, FontStyle.Bold),
-            TextAlign = ContentAlignment.MiddleLeft
+            Dock = DockStyle.Fill, Padding = new Padding(26, 22, 26, 22),
+            ColumnCount = 1, RowCount = 4, BackColor = Surface
         };
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 86));
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
+
+        var heading = new Panel { Dock = DockStyle.Fill };
+        heading.Controls.Add(new Label
+        {
+            Text = "Elige qué sincronizar", ForeColor = Ink,
+            Font = new Font("Segoe UI Semibold", 19, FontStyle.Bold),
+            Location = new Point(0, 0), AutoSize = true
+        });
+        heading.Controls.Add(new Label
+        {
+            Text = "Administra tus carpetas y archivos desde este dispositivo.",
+            ForeColor = Muted, Font = new Font("Segoe UI", 10),
+            Location = new Point(2, 42), AutoSize = true
+        });
 
         var toolbar = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoScroll = true
+            Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false, AutoScroll = true
         };
+        toolbar.Controls.Add(CreateButton("+  Carpeta", (_, _) => AddFolder(), true));
+        toolbar.Controls.Add(CreateButton("+  Archivos", (_, _) => AddFiles(), true));
+        toolbar.Controls.Add(CreateButton("Quitar selección", (_, _) => RemoveSelection(), false));
 
-        toolbar.Controls.Add(CreateButton(
-            "Agregar carpeta",
-            (_, _) => AddFolder()));
-
-        toolbar.Controls.Add(CreateButton(
-            "Agregar archivos",
-            (_, _) => AddFiles()));
-
-        toolbar.Controls.Add(CreateButton(
-            "Quitar selección",
-            (_, _) => RemoveSelection()));
-
+        var listPanel = new Panel
+        {
+            Dock = DockStyle.Fill, BackColor = Color.White,
+            Padding = new Padding(12)
+        };
+        listPanel.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Border);
+            e.Graphics.DrawRectangle(pen, 0, 0, listPanel.Width - 1, listPanel.Height - 1);
+        };
         _list.Dock = DockStyle.Fill;
+        _list.BorderStyle = BorderStyle.None;
+        _list.BackColor = Color.White;
+        _list.ForeColor = Ink;
+        _list.Font = new Font("Segoe UI", 10);
+        _list.ItemHeight = 30;
+        _list.IntegralHeight = false;
         _list.HorizontalScrollbar = true;
-        _list.Font = new Font(
-            Font.FontFamily,
-            10,
-            FontStyle.Regular);
+        listPanel.Controls.Add(_list);
 
         var footer = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1
         };
-
-        footer.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Percent, 100));
-
-        footer.ColumnStyles.Add(
-            new ColumnStyle(SizeType.Absolute, 150));
-
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 174));
         _status.Dock = DockStyle.Fill;
         _status.TextAlign = ContentAlignment.MiddleLeft;
-
-        var save = CreateButton(
-            "Guardar selección",
-            (_, _) => SaveSelections());
-
+        _status.ForeColor = Muted;
+        var save = CreateButton("Guardar cambios", (_, _) => SaveSelections(), true);
         save.Dock = DockStyle.Fill;
-
+        save.Margin = new Padding(0, 13, 0, 13);
         footer.Controls.Add(_status, 0, 0);
         footer.Controls.Add(save, 1, 0);
 
-        layout.Controls.Add(title, 0, 0);
-        layout.Controls.Add(toolbar, 0, 1);
-        layout.Controls.Add(_list, 0, 2);
-        layout.Controls.Add(footer, 0, 3);
-
-        Controls.Add(layout);
+        shell.Controls.Add(heading, 0, 0);
+        shell.Controls.Add(toolbar, 0, 1);
+        shell.Controls.Add(listPanel, 0, 2);
+        shell.Controls.Add(footer, 0, 3);
+        Controls.Add(shell);
     }
 
-    private static Button CreateButton(
-        string text,
-        EventHandler handler)
+    private static Button CreateButton(string text, EventHandler handler, bool primary)
     {
         var button = new Button
         {
-            Text = text,
-            Width = 150,
+            Text = text, AutoSize = false,
+            Width = text.Contains("Quitar") ? 148 : 124,
             Height = 36,
-            Margin = new Padding(0, 4, 10, 4)
+            Margin = new Padding(0, 4, 10, 4),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = primary ? Accent : Color.White,
+            ForeColor = primary ? Color.White : Ink,
+            Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold),
+            Cursor = Cursors.Hand
         };
-
+        button.FlatAppearance.BorderSize = primary ? 0 : 1;
+        button.FlatAppearance.BorderColor = Border;
         button.Click += handler;
         return button;
+    }
+
+    private DialogResult AskRemoval(SyncSelection selected)
+    {
+        using var dialog = new Form
+        {
+            Text = "Dejar de sincronizar",
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false, MinimizeBox = false,
+            ShowInTaskbar = false, ClientSize = new Size(530, 330),
+            BackColor = Color.White, Font = new Font("Segoe UI", 10)
+        };
+        var title = new Label
+        {
+            Text = "¿Qué deseas hacer con este contenido?",
+            Font = new Font("Segoe UI Semibold", 15, FontStyle.Bold),
+            ForeColor = Ink, Location = new Point(25, 23), AutoSize = true
+        };
+        var name = new Label
+        {
+            Text = selected.Path, ForeColor = Muted,
+            Location = new Point(26, 66), Size = new Size(475, 38),
+            AutoEllipsis = true
+        };
+        var keep = CreateButton("Conservar en ambos lugares", (_, _) =>
+        { dialog.DialogResult = DialogResult.No; dialog.Close(); }, true);
+        keep.SetBounds(25, 122, 480, 44);
+        keep.Margin = Padding.Empty;
+        var trash = CreateButton("Enviar contenido web a la papelera", (_, _) =>
+        { dialog.DialogResult = DialogResult.Yes; dialog.Close(); }, false);
+        trash.SetBounds(25, 177, 480, 44);
+        trash.Margin = Padding.Empty;
+        var detail = new Label
+        {
+            Text = "El contenido de este dispositivo se conservará en ambos casos.",
+            ForeColor = Muted, Location = new Point(26, 234),
+            Size = new Size(475, 25)
+        };
+        var cancel = CreateButton("Cancelar", (_, _) =>
+        { dialog.DialogResult = DialogResult.Cancel; dialog.Close(); }, false);
+        cancel.SetBounds(375, 277, 130, 36);
+        dialog.Controls.AddRange(new Control[] { title, name, keep, trash, detail, cancel });
+        dialog.CancelButton = cancel;
+        dialog.AcceptButton = keep;
+        return dialog.ShowDialog(this);
     }
 
     private void AddFolder()
@@ -271,13 +328,7 @@ public partial class Form1 : Form
             return;
 
         var selected = _selections[index];
-        var choice = MessageBox.Show(this,
-            "¿Qué deseas hacer con el contenido de esta selección?\n\n" +
-            "Sí: conservar en este dispositivo y enviar el contenido de la web a la papelera.\n" +
-            "No: conservar el contenido en este dispositivo y en la web.\n" +
-            "Cancelar: mantener la sincronización.",
-            "Quitar sincronización", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question,
-            MessageBoxDefaultButton.Button2);
+        var choice = AskRemoval(selected);
         if (choice == DialogResult.Cancel) return;
         if (choice == DialogResult.Yes)
             _removals.Add(new RemovalRequest { Path = selected.Path, Kind = (int)selected.Kind });
