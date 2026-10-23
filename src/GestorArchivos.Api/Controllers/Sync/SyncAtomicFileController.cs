@@ -169,6 +169,27 @@ public sealed class SyncAtomicFileController : ControllerBase
                 });
             }
 
+            // Un reintento solo es idempotente si el contenido coincide.
+            // Si el archivo local cambió durante la desconexión, devolver
+            // éxito aquí descartaría silenciosamente esa nueva versión.
+            string retryHash;
+            await using (var retryStream = file.OpenReadStream())
+            {
+                retryHash = Convert.ToHexString(
+                    await SHA256.HashDataAsync(retryStream, cancellationToken));
+            }
+
+            if (existingFile.TamanoBytes != file.Length ||
+                !string.Equals(existingFile.HashSha256, retryHash,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Conflict(new
+                {
+                    message = "El contenido local difiere del archivo remoto existente. " +
+                              "Se requiere sincronizar la nueva versión; no se confirmó el reintento."
+                });
+            }
+
             return Ok(new
             {
                 syncItemId = existingItem.Id,
