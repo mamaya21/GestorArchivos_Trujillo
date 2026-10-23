@@ -275,6 +275,11 @@ public class FoldersController : ControllerBase
         if (!folder.CarpetaPadreId.HasValue)
             return BadRequest(new { message = "No se puede renombrar una carpeta raíz protegida." });
 
+        if (await IsSelectorManagedRootAsync(id, cancellationToken))
+            return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
+
+
+
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
                 id,
@@ -337,6 +342,9 @@ public class FoldersController : ControllerBase
     {
         var folder = await _dbContext.Carpetas.FirstOrDefaultAsync(x => x.Id == id && !x.EnPapelera, cancellationToken);
         if (folder is null) return NotFound();
+        if (await IsSelectorManagedRootAsync(id, cancellationToken))
+            return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
+
         if (!folder.CarpetaPadreId.HasValue) return BadRequest(new { message = "No se puede mover una carpeta raíz." });
         var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
         if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
@@ -398,6 +406,21 @@ public class FoldersController : ControllerBase
         return NoContent();
     }
 
+    private async Task<bool> IsSelectorManagedRootAsync(Guid folderId, CancellationToken cancellationToken)
+    {
+        return await (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join folder in _dbContext.Carpetas.AsNoTracking()
+                on item.CarpetaRemotaId equals folder.Id
+            where item.Tipo == TipoElementoSync.Carpeta &&
+                  folder.Id == folderId &&
+                  folder.CarpetaPadreId == device.CarpetaRaizId
+            select item.Id
+        ).AnyAsync(cancellationToken);
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> MoveToTrash(
         Guid id,
@@ -415,6 +438,11 @@ public class FoldersController : ControllerBase
 
         if (!folder.CarpetaPadreId.HasValue)
             return BadRequest(new { message = "No se puede enviar a papelera una carpeta raíz protegida." });
+
+        if (await IsSelectorManagedRootAsync(id, cancellationToken))
+            return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
+
+
 
         var userId = CurrentUserId();
 
