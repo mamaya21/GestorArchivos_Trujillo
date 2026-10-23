@@ -552,14 +552,16 @@ public class SyncController : ControllerBase
             x => x.CarpetaPadreId == device.RootFolderId &&
                  x.Nombre == name && !x.EnPapelera, cancellationToken);
         if (active)
-            return Conflict(new { message = "Ya existe una carpeta activa con ese nombre. No se sobrescribirá." });
+            return NoContent();
 
         var candidates = await _dbContext.Carpetas
             .Where(x => x.CarpetaPadreId == device.RootFolderId &&
                         x.Nombre == name && x.EnPapelera)
             .ToListAsync(cancellationToken);
+        if (candidates.Count == 0)
+            return NoContent();
         if (candidates.Count != 1)
-            return Conflict(new { message = "No existe una única carpeta eliminada que pueda restaurarse." });
+            return Conflict(new { message = "Existen varias carpetas eliminadas con ese nombre. Se requiere resolver el conflicto." });
 
         var root = candidates[0];
         if (!root.EliminacionLoteId.HasValue)
