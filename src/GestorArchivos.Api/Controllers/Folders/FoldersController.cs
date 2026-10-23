@@ -272,6 +272,9 @@ public class FoldersController : ControllerBase
         if (folder is null)
             return NotFound();
 
+        if (!folder.CarpetaPadreId.HasValue)
+            return BadRequest(new { message = "No se puede renombrar una carpeta raíz protegida." });
+
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
                 id,
@@ -380,6 +383,9 @@ public class FoldersController : ControllerBase
 
         if (folder is null)
             return NotFound();
+
+        if (!folder.CarpetaPadreId.HasValue)
+            return BadRequest(new { message = "No se puede enviar a papelera una carpeta raíz protegida." });
 
         var userId = CurrentUserId();
 
