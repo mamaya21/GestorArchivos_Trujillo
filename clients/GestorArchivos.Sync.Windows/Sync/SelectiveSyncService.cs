@@ -1445,8 +1445,57 @@ public sealed class SelectiveSyncService
                         $"{mappedElsewhere.RutaLocal}");
                     continue;
                 }
-                throw new InvalidOperationException(
-                    $"La carpeta remota ya está asociada a '{mappedElsewhere.RutaLocal}'.");
+                // The same remote folder was renamed or moved on the web.
+                // Preserve its mapping and all descendant mappings; never
+                // create a second folder or overwrite an existing directory.
+                if (Directory.Exists(localChild) || File.Exists(localChild))
+                    throw new InvalidOperationException(
+                        $"Destino local ocupado para mover carpeta: '{localChild}'.");
+
+                ValidatePathWithoutLinks(mappedElsewhere.RutaLocal);
+                ValidatePathWithoutLinks(localFolderPath);
+                var previousPath = mappedElsewhere.RutaLocal;
+                var descendantsToMove = items.Where(x =>
+                    PathsEqual(x.RutaLocal, previousPath) ||
+                    IsDescendantPath(x.RutaLocal, previousPath))
+                    .OrderBy(x => x.RutaLocal.Length).ToList();
+
+                Directory.Move(previousPath, localChild);
+
+                foreach (var descendant in descendantsToMove)
+                {
+                    var newPath = PathsEqual(descendant.RutaLocal, previousPath)
+                        ? localChild
+                        : Path.Combine(localChild,
+                            Path.GetRelativePath(previousPath, descendant.RutaLocal));
+                    await _api.UpdateItemPathAsync(
+                        descendant.SyncItemId, newPath, cancellationToken);
+                }
+
+                var updatedBaselines = (await _baselines.LoadAsync(cancellationToken)).ToList();
+                foreach (var baseline in updatedBaselines.Where(x =>
+                    PathsEqual(x.LocalPath, previousPath) ||
+                    IsDescendantPath(x.LocalPath, previousPath)))
+                    baseline.LocalPath = Path.Combine(localChild,
+                        Path.GetRelativePath(previousPath, baseline.LocalPath));
+                await _baselines.SaveAsync(updatedBaselines, cancellationToken);
+
+                var identities = await LoadRootIdentitiesAsync(cancellationToken);
+                foreach (var identity in identities.Where(x =>
+                    PathsEqual(x.Key, previousPath) ||
+                    IsDescendantPath(x.Key, previousPath)).ToList())
+                {
+                    identities.Remove(identity.Key);
+                    var identityPath = PathsEqual(identity.Key, previousPath)
+                        ? localChild
+                        : Path.Combine(localChild,
+                            Path.GetRelativePath(previousPath, identity.Key));
+                    identities[identityPath] = identity.Value;
+                }
+                await SaveRootIdentitiesAsync(identities, cancellationToken);
+
+                items = await _api.GetItemsAsync(cancellationToken);
+                Console.WriteLine($"[SyncFolder] Movimiento remoto aplicado: {previousPath} => {localChild}");
             }
 
             if (matchingLocalFolderPath is null)
