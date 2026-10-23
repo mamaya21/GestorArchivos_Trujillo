@@ -201,6 +201,61 @@ public sealed class SyncReconnectRegressionTests
         }
     }
 
+    [Fact]
+    public async Task LostFileCreateResponse_ChangedLocalBytes_RejectsUnsafeReplay()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync("/api/sync/devices/register",
+            new { name = $"ChangedReplay-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"changed-{Guid.NewGuid():N}.txt";
+        var path = $"C:\\SyncReplay\\{name}";
+
+        static MultipartFormDataContent Content(Guid folder, string localPath,
+            string fileName, string body)
+        {
+            var form = new MultipartFormDataContent();
+            form.Add(new StringContent(folder.ToString()), "folderId");
+            form.Add(new StringContent(localPath), "localPath");
+            form.Add(new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(body)),
+                "file", fileName);
+            return form;
+        }
+
+        Guid originalId;
+        using (var first = SyncClient(token))
+        using (var content = Content(root, path, name, "Original content"))
+        using (var created = await first.PostAsync("/api/sync/files/atomic", content))
+        {
+            await RequireSuccess(created);
+            using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            originalId = json.RootElement.GetProperty("remoteFileId").GetGuid();
+        }
+
+        using (var restarted = SyncClient(token))
+        using (var changed = Content(root, path, name, "New local content"))
+        using (var retry = await restarted.PostAsync("/api/sync/files/atomic", changed))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
+        }
+
+        using (var verify = SyncClient(token))
+        using (var itemsResponse = await verify.GetAsync("/api/sync/items"))
+        {
+            await RequireSuccess(itemsResponse);
+            using var items = JsonDocument.Parse(await itemsResponse.Content.ReadAsStringAsync());
+            var matches = items.RootElement.EnumerateArray()
+                .Where(x => x.GetProperty("archivoRemotoId").ValueKind != JsonValueKind.Null &&
+                            x.GetProperty("archivoRemotoId").GetGuid() == originalId)
+                .ToList();
+            Assert.Single(matches);
+        }
+    }
+
     private HttpClient Client() => _factory.CreateClient(new()
     {
         AllowAutoRedirect = false,
