@@ -63,6 +63,12 @@ public class FoldersController : ControllerBase
             }
         }
 
+        var protectedIds = (await _dbContext.ElementosSync.AsNoTracking()
+            .Where(x => x.Activo && x.Tipo == TipoElementoSync.Carpeta &&
+                        x.CarpetaRemotaId.HasValue)
+            .Select(x => x.CarpetaRemotaId!.Value)
+            .ToListAsync(cancellationToken)).ToHashSet();
+
         var candidateFolders = await _dbContext.Carpetas
             .AsNoTracking()
             .Where(x =>
@@ -90,7 +96,12 @@ public class FoldersController : ControllerBase
                     PermisoCarpeta.Leer,
                     cancellationToken))
             {
-                visibleFolders.Add(folder);
+                visibleFolders.Add(new
+                {
+                    folder.Id, folder.Nombre, folder.CarpetaPadreId,
+                    folder.FechaCreacion, folder.FechaModificacion,
+                    selectorManaged = protectedIds.Contains(folder.Id)
+                });
             }
         }
 
