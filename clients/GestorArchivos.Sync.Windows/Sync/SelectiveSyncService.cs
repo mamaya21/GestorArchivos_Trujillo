@@ -901,10 +901,46 @@ public sealed class SelectiveSyncService
             }
 
             if (candidates.Count == 0)
-                throw new InvalidOperationException(
-                    $"La carpeta asociada '{folder.RutaLocal}' ya no existe. " +
-                    "No se puede distinguir una eliminación de un movimiento " +
-                    "sin evidencia suficiente. Se bloqueó el ciclo.");
+            {
+                // A missing path alone cannot authorize remote deletion.
+                // Only a matching Windows Recycle Bin entry establishes that
+                // this folder was explicitly deleted rather than relocated.
+                if (IsInWindowsRecycleBin(folder.RutaLocal))
+                {
+                    var remoteFolder = snapshot.Folders.SingleOrDefault(x =>
+                        x.Id == folder.CarpetaRemotaId);
+                    if (remoteFolder is null)
+                        continue;
+
+                    // Verify the remote folder and every tracked descendant
+                    // are still unchanged before applying a destructive action.
+                    var remoteFiles = snapshot.Files.ToDictionary(x => x.Id);
+                    var safe = descendantFiles.All(file =>
+                    {
+                        var baseline = baselines.SingleOrDefault(x =>
+                            x.SyncItemId == file.SyncItemId &&
+                            x.RemoteFileId == file.ArchivoRemotoId);
+                        return baseline is not null &&
+                            remoteFiles.TryGetValue(file.ArchivoRemotoId!.Value, out var current) &&
+                            baseline.RemoteVersion == current.Version &&
+                            HashesEqual(baseline.RemoteHash, current.HashSha256) &&
+                            HashesEqual(baseline.LocalHash, baseline.RemoteHash);
+                    });
+                    if (!safe)
+                    {
+                        Console.WriteLine($"[SyncFolder] Eliminación pendiente: contenido remoto sin baseline verificable en {folder.RutaLocal}");
+                        continue;
+                    }
+
+                    await _api.TrashSelectedFolderAsync(remoteFolder.Id, cancellationToken);
+                    Console.WriteLine($"[SyncFolder] Carpeta eliminada en Windows enviada a papelera web: {folder.RutaLocal}");
+                    continue;
+                }
+
+                if (_reportedMissingFolders.Add(folder.RutaLocal))
+                    Console.WriteLine($"[SyncFolder] Carpeta local ausente sin evidencia de eliminación: {folder.RutaLocal}. Se conserva el remoto.");
+                continue;
+            }
             if (candidates.Count != 1)
                 throw new InvalidOperationException(
                     $"Movimiento de carpeta ambiguo: '{folder.RutaLocal}'.");
@@ -2608,6 +2644,59 @@ public sealed class SelectiveSyncService
             throw new InvalidOperationException(
                 $"Nombre remoto inseguro: '{name}'.");
         }
+    }
+
+    private static bool IsInWindowsRecycleBin(string originalPath)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            var fullPath = Path.GetFullPath(originalPath);
+            var root = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrWhiteSpace(root)) return false;
+            var recycle = Path.Combine(root, "$Recycle.Bin");
+            if (!Directory.Exists(recycle)) return false;
+            foreach (var userBin in Directory.EnumerateDirectories(recycle))
+            {
+                IEnumerable<string> entries;
+                try { entries = Directory.EnumerateFiles(userBin, "$I*").ToArray(); }
+                catch (UnauthorizedAccessException) { continue; }
+                catch (IOException) { continue; }
+                foreach (var entry in entries)
+                {
+                    try
+                    {
+                        var bytes = File.ReadAllBytes(entry);
+                        if (bytes.Length < 26) continue;
+                        var version = BitConverter.ToInt64(bytes, 0);
+                        int offset;
+                        if (version == 2)
+                        {
+                            if (bytes.Length < 28) continue;
+                            var characters = BitConverter.ToInt32(bytes, 24);
+                            if (characters <= 0 || characters > 32767 ||
+                                (long)characters * 2 > bytes.Length - 28) continue;
+                            offset = 28;
+                        }
+                        else if (version == 1) offset = 24;
+                        else continue;
+                        var recycledPath = Encoding.Unicode.GetString(bytes, offset,
+                            bytes.Length - offset).TrimEnd('\\0');
+                        if (PathsEqual(recycledPath, fullPath))
+                        {
+                            var payload = Path.Combine(userBin, "$R" + Path.GetFileName(entry)[2..]);
+                            if (Directory.Exists(payload)) return true;
+                        }
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                    catch (ArgumentException) { }
+                }
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        return false;
     }
 
     private static bool PathsEqual(
