@@ -1133,7 +1133,12 @@ public sealed class SelectiveSyncService
                 x.SyncItemId == plan.Item.SyncItemId);
             if (existing is not null)
             {
+                // Renaming remotely can increment the version without changing
+                // file bytes. Advance only the remote side of the baseline so
+                // an edited local file is uploaded, not falsely conflicted.
                 existing.LocalPath = plan.Destination;
+                existing.RemoteVersion = remote.Version;
+                existing.RemoteHash = remote.HashSha256;
                 await _baselines.SaveAsync(updated, cancellationToken);
             }
         }
