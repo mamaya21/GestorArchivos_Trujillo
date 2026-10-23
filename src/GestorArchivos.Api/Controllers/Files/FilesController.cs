@@ -53,10 +53,6 @@ public class FilesController : ControllerBase
         if (!string.Equals(Path.GetExtension(name), ".txt", StringComparison.OrdinalIgnoreCase))
             return BadRequest(new { message = "Solo se permite crear archivos .txt." });
 
-        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
-                x => x.CarpetaRaizId == request.FolderId, cancellationToken))
-            return Conflict(new { message = "Los archivos principales de sincronización se agregan desde el selector." });
-
         if (!await _dbContext.Carpetas.AsNoTracking().AnyAsync(
                 x => x.Id == request.FolderId && !x.EnPapelera, cancellationToken))
             return BadRequest(new { message = "La carpeta no existe." });
@@ -125,10 +121,6 @@ public class FilesController : ControllerBase
                 message = "El archivo supera el l�mite de 4 GB."
             });
         }
-
-        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
-                x => x.CarpetaRaizId == folderId, cancellationToken))
-            return Conflict(new { message = "Los archivos principales de sincronización se agregan desde el selector." });
 
         var folderExists = await _dbContext.Carpetas
             .AsNoTracking()
