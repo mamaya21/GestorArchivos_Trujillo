@@ -182,20 +182,22 @@ export default function TrashPage() {
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '12px 0' }}>
-        <label>
+      <div className="trash-selection-toolbar">
+        <label className="trash-select-all">
           <input type="checkbox" checked={allVisibleSelected}
             disabled={loading || processing || !visibleItems.length}
             onChange={toggleAll} />
           {' '}Seleccionar todos los visibles
         </label>
-        <span>{selectedItems.length} seleccionados</span>
-        <button type="button" disabled={processing || !selectedItems.length}
-          onClick={() => void execute(selectedItems, 'restore')}>Restaurar seleccionados</button>
-        <button type="button" disabled={processing || !selectedItems.length}
-          onClick={() => void execute(selectedItems, 'delete')}>Eliminar seleccionados definitivamente</button>
-        <button type="button" disabled={processing || !selectedItems.length}
-          onClick={() => setSelected([])}>Deseleccionar</button>
+        <span className="trash-selection-count">{selectedItems.length} seleccionados</span>
+        <div className="trash-bulk-actions">
+          <button className="trash-btn trash-btn-primary" type="button" disabled={processing || !selectedItems.length}
+            onClick={() => void execute(selectedItems, 'restore')}>↩ Restaurar</button>
+          <button className="trash-btn trash-btn-danger" type="button" disabled={processing || !selectedItems.length}
+            onClick={() => void execute(selectedItems, 'delete')}>🗑 Eliminar definitivamente</button>
+          <button className="trash-btn trash-btn-secondary" type="button" disabled={processing || !selectedItems.length}
+            onClick={() => setSelected([])}>Deseleccionar</button>
+        </div>
       </div>
       {notice && <div role="status">{notice}</div>}
       {processing && <div>Procesando elementos...</div>}
