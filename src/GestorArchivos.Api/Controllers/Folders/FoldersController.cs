@@ -176,6 +176,11 @@ public class FoldersController : ControllerBase
 
         if (request.ParentId.HasValue)
         {
+            if (await _dbContext.DispositivosSync.AsNoTracking()
+                .AnyAsync(x => x.CarpetaRaizId == request.ParentId.Value,
+                    cancellationToken))
+                return Conflict(new { message = "Las carpetas principales de sincronización se agregan desde el selector de este dispositivo." });
+
             var parentExists = await _dbContext.Carpetas
                 .AsNoTracking()
                 .AnyAsync(
@@ -346,6 +351,10 @@ public class FoldersController : ControllerBase
             return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
 
         if (!folder.CarpetaPadreId.HasValue) return BadRequest(new { message = "No se puede mover una carpeta raíz." });
+        if (await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.CarpetaRaizId == request.DestinationFolderId,
+                cancellationToken))
+            return Conflict(new { message = "No se pueden agregar carpetas principales de sincronización desde la web." });
         var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
         if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
         if (folder.CarpetaPadreId == destination.Id) return NoContent();
