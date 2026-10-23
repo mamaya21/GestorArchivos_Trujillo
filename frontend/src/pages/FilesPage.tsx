@@ -676,7 +676,7 @@ export default function FilesPage() {
         let resolution: 'skip' | 'keepBoth' | 'replace' | undefined
         const normalized = source.nombre.normalize('NFC').toLocaleLowerCase('es')
         if (existingNames.has(normalized)) {
-          if (applyToAll) {
+          if (applyToAll && !(applyToAll === 'replace' && item.kind === 'folders')) {
             resolution = applyToAll
           } else {
             const choice = await Swal.fire({
