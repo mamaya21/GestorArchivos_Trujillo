@@ -95,6 +95,8 @@ public sealed class SelectiveSyncService
             }
         }
 
+        await ReconcileLocalFolderMovesAsync(selections, cancellationToken);
+
         // Antes de cualquier escritura, detectar movimientos o renombrados locales
         // ambiguos. Sin esta barrera el recorrido por nombre puede crear otro
         // archivo remoto y después enviar el original a la papelera.
@@ -137,6 +139,180 @@ public sealed class SelectiveSyncService
 
         await RefreshBaselineAsync(cancellationToken);
         await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
+    }
+
+    private async Task ReconcileLocalFolderMovesAsync(
+        IReadOnlyList<Selection> selections,
+        CancellationToken cancellationToken)
+    {
+        var items = await _api.GetItemsAsync(cancellationToken);
+        var snapshot = await _api.GetSnapshotAsync(cancellationToken);
+        var selectedRoots = selections.Where(x => x.Kind == 1)
+            .Select(x => Path.GetFullPath(x.Path)).ToList();
+
+        // Procesar únicamente carpetas no raíz cuya ubicación anterior
+        // ya no existe. La identidad remota debe ser inequívoca.
+        var missing = items.Where(x => x.Tipo == SyncItemType.Folder &&
+            x.CarpetaRemotaId.HasValue &&
+            selectedRoots.Any(root => IsDescendantPath(x.RutaLocal, root)) &&
+            !Directory.Exists(x.RutaLocal))
+            .OrderBy(x => x.RutaLocal.Length).ToList();
+
+        foreach (var folder in missing)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // Si un ancestro también desapareció, será él quien actualice
+            // todas las rutas descendientes.
+            if (missing.Any(x => x.SyncItemId != folder.SyncItemId &&
+                IsDescendantPath(folder.RutaLocal, x.RutaLocal)))
+                continue;
+
+            var oldPrefix = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(folder.RutaLocal));
+            var descendants = items.Where(x =>
+                IsDescendantPath(x.RutaLocal, oldPrefix)).ToList();
+
+            var candidates = new List<string>();
+            foreach (var root in selectedRoots)
+            {
+                foreach (var candidate in Directory.EnumerateDirectories(
+                    root, "*", SearchOption.AllDirectories))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (items.Any(x => x.Tipo == SyncItemType.Folder &&
+                        PathsEqual(x.RutaLocal, candidate)))
+                        continue;
+                    if (IsReparsePoint(candidate))
+                        throw new InvalidOperationException(
+                            $"Enlace de directorio no permitido: '{candidate}'.");
+
+                    // La carpeta se reconoce por las rutas relativas de
+                    // sus archivos asociados y sus hashes de baseline.
+                    var files = descendants.Where(x =>
+                        x.Tipo == SyncItemType.File &&
+                        x.ArchivoRemotoId.HasValue).ToList();
+                    if (files.Count == 0)
+                        continue;
+                    var baselines = await _baselines.LoadAsync(cancellationToken);
+                    var verified = true;
+                    foreach (var file in files)
+                    {
+                        var relative = Path.GetRelativePath(oldPrefix,
+                            file.RutaLocal);
+                        var newPath = Path.Combine(candidate, relative);
+                        var baseline = baselines.SingleOrDefault(x =>
+                            x.SyncItemId == file.SyncItemId &&
+                            x.RemoteFileId == file.ArchivoRemotoId);
+                        if (baseline is null ||
+                            !HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
+                            !File.Exists(newPath))
+                        {
+                            verified = false;
+                            break;
+                        }
+                        ValidatePathWithoutLinks(newPath);
+                        if (!HashesEqual(await HashLocalAsync(newPath,
+                                cancellationToken), baseline.LocalHash))
+                        {
+                            verified = false;
+                            break;
+                        }
+                    }
+                    if (verified)
+                        candidates.Add(candidate);
+                }
+            }
+
+            if (candidates.Count == 0)
+                continue;
+            if (candidates.Count != 1)
+                throw new InvalidOperationException(
+                    $"Movimiento de carpeta ambiguo: '{folder.RutaLocal}'.");
+
+            var destination = candidates[0];
+            var destinationParent = Path.GetDirectoryName(destination)!;
+            var parentMapping = items.SingleOrDefault(x =>
+                x.Tipo == SyncItemType.Folder &&
+                x.CarpetaRemotaId.HasValue &&
+                PathsEqual(x.RutaLocal, destinationParent));
+            if (parentMapping is null)
+                throw new InvalidOperationException(
+                    $"Destino de carpeta sin asociación: '{destinationParent}'.");
+
+            var remote = snapshot.Folders.SingleOrDefault(x =>
+                x.Id == folder.CarpetaRemotaId);
+            if (remote is null)
+                throw new InvalidOperationException(
+                    $"Carpeta remota no disponible: '{folder.RutaLocal}'.");
+
+            var newName = Path.GetFileName(destination);
+            ValidateRemoteName(newName);
+            var targetParent = parentMapping.CarpetaRemotaId!.Value;
+            if (snapshot.Folders.Any(x => x.Id != remote.Id &&
+                x.CarpetaPadreId == targetParent &&
+                NamesEqual(x.Nombre, newName)) ||
+                snapshot.Files.Any(x => x.CarpetaId == targetParent &&
+                NamesEqual(x.Nombre, newName)))
+                throw new InvalidOperationException(
+                    $"Destino remoto ocupado: '{destination}'.");
+
+            // Evitar mover una carpeta dentro de sí misma.
+            var currentParent = targetParent;
+            var seen = new HashSet<Guid>();
+            while (seen.Add(currentParent))
+            {
+                if (currentParent == remote.Id)
+                    throw new InvalidOperationException(
+                        "Movimiento de carpeta cíclico bloqueado.");
+                var ancestor = snapshot.Folders.FirstOrDefault(x =>
+                    x.Id == currentParent);
+                if (ancestor?.CarpetaPadreId is not Guid next)
+                    break;
+                currentParent = next;
+            }
+
+            if (remote.CarpetaPadreId != targetParent)
+                await _api.MoveRemoteFolderAsync(remote.Id, targetParent,
+                    cancellationToken);
+            if (!NamesEqual(remote.Nombre, newName))
+                await _api.RenameRemoteFolderAsync(remote.Id, newName,
+                    cancellationToken);
+
+            var affected = items.Where(x =>
+                PathsEqual(x.RutaLocal, oldPrefix) ||
+                IsDescendantPath(x.RutaLocal, oldPrefix)).ToList();
+            foreach (var item in affected.OrderBy(x => x.RutaLocal.Length))
+            {
+                var newPath = PathsEqual(item.RutaLocal, oldPrefix)
+                    ? destination
+                    : Path.Combine(destination, Path.GetRelativePath(
+                        oldPrefix, item.RutaLocal));
+                await _api.UpdateItemPathAsync(item.SyncItemId, newPath,
+                    cancellationToken);
+                item.RutaLocal = newPath;
+            }
+
+            var updated = (await _baselines.LoadAsync(cancellationToken))
+                .ToList();
+            foreach (var baseline in updated.Where(x =>
+                PathsEqual(x.LocalPath, oldPrefix) ||
+                IsDescendantPath(x.LocalPath, oldPrefix)))
+            {
+                baseline.LocalPath = PathsEqual(baseline.LocalPath, oldPrefix)
+                    ? destination
+                    : Path.Combine(destination, Path.GetRelativePath(
+                        oldPrefix, baseline.LocalPath));
+            }
+            await _baselines.SaveAsync(updated, cancellationToken);
+        }
+    }
+
+    private static bool IsDescendantPath(string child, string parent)
+    {
+        var prefix = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(parent)) + Path.DirectorySeparatorChar;
+        return Path.GetFullPath(child).StartsWith(
+            prefix, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task GuardAgainstUnresolvedLocalMovesAsync(
