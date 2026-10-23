@@ -25,6 +25,8 @@ $download = Join-Path $work 'download.bin'
 $workerFile = Join-Path $work 'worker.ps1'
 $checkpoint = Join-Path $work 'checkpoint.txt'
 $worker = $null
+$workerError = Join-Path $work 'worker-error.log'
+$workerOutput = Join-Path $work 'worker-output.log'
 $uploadId = $null
 $success = $false
 try {
@@ -52,6 +54,7 @@ try {
     @'
 param([string]$Base,[string]$Token,[string]$Id,[string]$Source,[string]$Marker)
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Net.Http
 $client = [Net.Http.HttpClient]::new()
 $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$Token)
 try {
@@ -76,10 +79,10 @@ try {
 } finally { $client.Dispose() }
 '@ | Set-Content -LiteralPath $workerFile -Encoding UTF8
     $powershell = (Get-Process -Id $PID).Path
-    $worker = Start-Process -FilePath $powershell -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"`"$workerFile`"",'-Base',"`"$base`"",'-Token',"`"$DeviceToken`"",'-Id',"`"$uploadId`"",'-Source',"`"$source`"",'-Marker',"`"$checkpoint`"") -PassThru -WindowStyle Hidden
+    $worker = Start-Process -FilePath $powershell -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',"`"$workerFile`"",'-Base',"`"$base`"",'-Token',"`"$DeviceToken`"",'-Id',"`"$uploadId`"",'-Source',"`"$source`"",'-Marker',"`"$checkpoint`"") -PassThru -WindowStyle Hidden -RedirectStandardError $workerError -RedirectStandardOutput $workerOutput
     $deadline = [DateTime]::UtcNow.AddMinutes(5)
     while (-not (Test-Path $checkpoint)) {
-        if ($worker.HasExited) { throw "El proceso de transferencia finalizó con código $($worker.ExitCode)." }
+        if ($worker.HasExited) { $details = if (Test-Path $workerError) { Get-Content -LiteralPath $workerError -Raw } else { "Sin detalle en stderr." }; throw "El proceso de transferencia finalizó con código $($worker.ExitCode). Detalle: $details" }
         if ([DateTime]::UtcNow -gt $deadline) { throw 'Timeout esperando el primer fragmento.' }
         Start-Sleep -Milliseconds 250
         $worker.Refresh()
@@ -91,6 +94,7 @@ try {
     if (@($status.receivedChunks).Count -ne 1 -or $status.receivedChunks[0] -ne 0) {
         throw 'El servidor no conservó el primer fragmento tras matar el proceso.'
     }
+    Add-Type -AssemblyName System.Net.Http
     $client = [Net.Http.HttpClient]::new()
     $client.Timeout = [TimeSpan]::FromMinutes(10)
     $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$DeviceToken)
@@ -132,5 +136,5 @@ try {
     if (-not $success -and $null -ne $uploadId) {
         try { Invoke-RestMethod -Method Delete -Uri "$base/api/sync/uploads/$uploadId" -Headers $headers | Out-Null } catch {}
     }
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    if ($success) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue } else { Write-Warning "Archivos de diagnóstico conservados en: $work" }
 }
