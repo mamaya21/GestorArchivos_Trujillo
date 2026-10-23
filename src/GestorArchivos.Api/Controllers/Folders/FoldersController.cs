@@ -63,11 +63,18 @@ public class FoldersController : ControllerBase
             }
         }
 
-        var protectedIds = (await _dbContext.ElementosSync.AsNoTracking()
-            .Where(x => x.Activo && x.Tipo == TipoElementoSync.Carpeta &&
-                        x.CarpetaRemotaId.HasValue)
-            .Select(x => x.CarpetaRemotaId!.Value)
-            .ToListAsync(cancellationToken)).ToHashSet();
+        // Only the selector-managed ROOT is locked in the web UI.
+        // Descendant folders are synced items, not independently selected roots.
+        var protectedIds = (await (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join folder in _dbContext.Carpetas.AsNoTracking()
+                on item.CarpetaRemotaId equals folder.Id
+            where item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
+                  folder.CarpetaPadreId == device.CarpetaRaizId
+            select folder.Id
+        ).ToListAsync(cancellationToken)).ToHashSet();
 
         var candidateFolders = await _dbContext.Carpetas
             .AsNoTracking()
