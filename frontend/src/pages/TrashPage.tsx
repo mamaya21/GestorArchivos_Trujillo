@@ -127,7 +127,7 @@ export default function TrashPage() {
           } catch (err) {
             if (action === 'restore' && err instanceof ApiError && err.status === 409 &&
                 /mismo nombre|ese nombre/i.test(err.message)) {
-              let resolution = applyToAll
+              let resolution: 'skip' | 'keepBoth' | null = applyToAll
               if (!resolution) {
                 const choice = await Swal.fire({
                   icon: 'warning',
