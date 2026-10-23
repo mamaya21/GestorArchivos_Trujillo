@@ -622,6 +622,26 @@ export default function FilesPage() {
       await Swal.fire({ icon: 'warning', title: 'Destino inválido', text: 'No puedes mover una carpeta dentro de sí misma.' })
       return
     }
+    if (clipboard.folderIds.length) {
+      try {
+        for (const id of clipboard.folderIds) {
+          const seen = new Set<string>()
+          let cursor: string | null = destinationFolderId
+          while (cursor && !seen.has(cursor)) {
+            if (cursor === id) {
+              await Swal.fire({ icon: 'warning', title: 'Destino inválido', text: 'No puedes mover una carpeta dentro de una de sus subcarpetas.' })
+              return
+            }
+            seen.add(cursor)
+            const ancestor: Folder = await apiRequest<Folder>(`/folders/${cursor}`)
+            cursor = ancestor.carpetaPadreId
+          }
+        }
+      } catch (error) {
+        await showFileError(error)
+        return
+      }
+    }
     const confirmation = await Swal.fire({
       title: 'Mover elementos',
       text: `¿Mover ${clipboard.folderIds.length + clipboard.fileIds.length} elemento(s) a esta carpeta?`,
