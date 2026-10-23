@@ -767,46 +767,46 @@ public sealed class SelectiveSyncService
                 }
                 if (matchesByIdentity.Count == 1)
                 {
-                    var destination = matchesByIdentity[0];
+                    var identityDestination = matchesByIdentity[0];
                     var parent = items.SingleOrDefault(x => x.Tipo == SyncItemType.Folder &&
                         x.CarpetaRemotaId.HasValue &&
-                        PathsEqual(x.RutaLocal, Path.GetDirectoryName(destination)!));
-                    var remote = snapshot.Folders.SingleOrDefault(x => x.Id == folder.CarpetaRemotaId);
-                    if (parent is null || remote is null)
-                        throw new InvalidOperationException($"Asociación incompleta: {destination}");
-                    var name = Path.GetFileName(destination);
+                        PathsEqual(x.RutaLocal, Path.GetDirectoryName(identityDestination)!));
+                    var identityRemote = snapshot.Folders.SingleOrDefault(x => x.Id == folder.CarpetaRemotaId);
+                    if (parent is null || identityRemote is null)
+                        throw new InvalidOperationException($"Asociación incompleta: {identityDestination}");
+                    var name = Path.GetFileName(identityDestination);
                     ValidateRemoteName(name);
-                    if (snapshot.Folders.Any(x => x.Id != remote.Id &&
+                    if (snapshot.Folders.Any(x => x.Id != identityRemote.Id &&
                         x.CarpetaPadreId == parent.CarpetaRemotaId &&
                         NamesEqual(x.Nombre, name)) ||
                         snapshot.Files.Any(x => x.CarpetaId == parent.CarpetaRemotaId &&
                         NamesEqual(x.Nombre, name)))
-                        throw new InvalidOperationException($"Destino remoto ocupado: {destination}");
-                    if (remote.CarpetaPadreId != parent.CarpetaRemotaId)
-                        await _api.MoveRemoteFolderAsync(remote.Id,
+                        throw new InvalidOperationException($"Destino remoto ocupado: {identityDestination}");
+                    if (identityRemote.CarpetaPadreId != parent.CarpetaRemotaId)
+                        await _api.MoveRemoteFolderAsync(identityRemote.Id,
                             parent.CarpetaRemotaId!.Value, cancellationToken);
-                    if (!NamesEqual(remote.Nombre, name))
-                        await _api.RenameRemoteFolderAsync(remote.Id, name, cancellationToken);
-                    foreach (var affected in items.Where(x => PathsEqual(x.RutaLocal, folder.RutaLocal) ||
+                    if (!NamesEqual(identityRemote.Nombre, name))
+                        await _api.RenameRemoteFolderAsync(identityRemote.Id, name, cancellationToken);
+                    foreach (var identityAffected in items.Where(x => PathsEqual(x.RutaLocal, folder.RutaLocal) ||
                                  IsDescendantPath(x.RutaLocal, folder.RutaLocal))
                                  .OrderBy(x => x.RutaLocal.Length))
                     {
-                        var newPath = PathsEqual(affected.RutaLocal, folder.RutaLocal)
-                            ? destination
-                            : Path.Combine(destination, Path.GetRelativePath(folder.RutaLocal, affected.RutaLocal));
-                        await _api.UpdateItemPathAsync(affected.SyncItemId, newPath, cancellationToken);
+                        var newPath = PathsEqual(identityAffected.RutaLocal, folder.RutaLocal)
+                            ? identityDestination
+                            : Path.Combine(identityDestination, Path.GetRelativePath(folder.RutaLocal, identityAffected.RutaLocal));
+                        await _api.UpdateItemPathAsync(identityAffected.SyncItemId, newPath, cancellationToken);
                     }
-                    var updated = (await _baselines.LoadAsync(cancellationToken)).ToList();
-                    foreach (var baseline in updated.Where(x =>
+                    var identityUpdated = (await _baselines.LoadAsync(cancellationToken)).ToList();
+                    foreach (var baseline in identityUpdated.Where(x =>
                         PathsEqual(x.LocalPath, folder.RutaLocal) ||
                         IsDescendantPath(x.LocalPath, folder.RutaLocal)))
-                        baseline.LocalPath = Path.Combine(destination,
+                        baseline.LocalPath = Path.Combine(identityDestination,
                             Path.GetRelativePath(folder.RutaLocal, baseline.LocalPath));
-                    await _baselines.SaveAsync(updated, cancellationToken);
+                    await _baselines.SaveAsync(identityUpdated, cancellationToken);
                     folderIdentities.Remove(folder.RutaLocal);
-                    folderIdentities[destination] = originalIdentity;
+                    folderIdentities[identityDestination] = originalIdentity;
                     await SaveRootIdentitiesAsync(folderIdentities, cancellationToken);
-                    Console.WriteLine($"[SyncFolder] Renombrado por identidad: {folder.RutaLocal} => {destination}");
+                    Console.WriteLine($"[SyncFolder] Renombrado por identidad: {folder.RutaLocal} => {identityDestination}");
                     continue;
                 }
             }
