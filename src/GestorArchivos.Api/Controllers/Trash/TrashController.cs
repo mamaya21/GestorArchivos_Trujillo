@@ -42,6 +42,20 @@ public sealed class TrashController : ControllerBase
             storageOptions.Value.RootPath);
     }
 
+    private async Task<bool> IsSelectorManagedTrashRootAsync(
+        Carpeta folder, CancellationToken cancellationToken)
+    {
+        if (!folder.CarpetaPadreId.HasValue)
+            return false;
+
+        // Las raíces antiguas pueden perder su asociación histórica
+        // cuando se seleccionan nuevamente. Proteger por el contenedor
+        // raíz del dispositivo, no únicamente por ElementoSync activo.
+        return await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.CarpetaRaizId == folder.CarpetaPadreId.Value,
+                cancellationToken);
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetContents(
         CancellationToken cancellationToken)
@@ -168,6 +182,9 @@ public sealed class TrashController : ControllerBase
 
         if (rootFolder is null)
             return NotFound();
+
+        if (await IsSelectorManagedTrashRootAsync(rootFolder, cancellationToken))
+            return Conflict(new { message = "La restauración de esta raíz sincronizada debe gestionarse desde el selector de este dispositivo." });
 
         if (!await _permissionService
                 .HasPermissionIncludingTrashAsync(
