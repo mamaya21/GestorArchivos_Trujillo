@@ -1509,6 +1509,7 @@ export default function FilesPage() {
         deviceId: string
         deviceName: string
         rootFolderName: string
+        rootFolderDeleted: boolean
         active: boolean
         lastConnectionUtc: string | null
       }>>('/sync/devices')
@@ -1544,11 +1545,33 @@ export default function FilesPage() {
 
       if (result.isDenied && linkedHere) {
         const confirm = await Swal.fire({
-          icon: 'warning', title: 'Desvincular este equipo',
-          text: 'Se revocará la conexión. Los archivos de Windows y del servidor se conservarán.',
-          showCancelButton: true, confirmButtonText: 'Desvincular', cancelButtonText: 'Cancelar',
+          icon: 'warning',
+          title: 'Desvincular este equipo',
+          input: 'radio',
+          inputOptions: {
+            keep: 'Conservar la carpeta web y poder retomar la sincronización',
+            discard: 'Retirar la carpeta web a Papelera e iniciar desde cero',
+          },
+          inputValue: 'keep',
+          inputValidator: (value) => !value ? 'Selecciona qué hacer con la carpeta web.' : undefined,
+          html: '<p>Los archivos y carpetas locales de Windows no se eliminarán.</p>',
+          showCancelButton: true,
+          confirmButtonText: 'Continuar',
+          cancelButtonText: 'Cancelar',
         })
         if (!confirm.isConfirmed) return
+        if (confirm.value === 'discard') {
+          const finalConfirm = await Swal.fire({
+            icon: 'warning',
+            title: '¿Retirar la carpeta web?',
+            text: 'La carpeta raíz y todo su contenido remoto pasarán a Papelera. Los archivos locales permanecerán intactos. Para volver a sincronizar, deberás registrar una sincronización nueva.',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, retirar carpeta web',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc3545',
+          })
+          if (!finalConfirm.isConfirmed) return
+        }
         // Pausar primero, revocar en el servidor y retirar las credenciales locales.
         // Ninguna de estas acciones elimina archivos ni carpetas.
         const pauseResponse = await fetch('http://127.0.0.1:47831/control', {
@@ -1564,17 +1587,22 @@ export default function FilesPage() {
           method: 'POST',
         })
         if (!deactivateResponse.ok) throw new Error('Se revocó el dispositivo remoto, pero no se pudo limpiar el registro local')
+        if (confirm.value === 'discard') {
+          await apiRequest(`/sync/devices/${linkedHere.deviceId}/discard-root`, { method: 'POST' })
+        }
         await Swal.fire({
           icon: 'success',
           title: 'Equipo desvinculado de forma segura',
-          text: 'Los archivos locales y remotos se conservaron. Reinicia el servicio Windows antes de activar una sincronización nueva.',
+          text: confirm.value === 'discard'
+            ? 'La carpeta web se trasladó a Papelera. Los archivos locales se conservaron. Reinicia el servicio Windows antes de iniciar una sincronización nueva.'
+            : 'Los archivos locales y remotos se conservaron. Reinicia el servicio Windows antes de activar una sincronización nueva.',
         })
         return
       }
       if (!result.isConfirmed) return
 
       if (active.length === 0) {
-        const previous = devices.filter(device => !device.active)
+        const previous = devices.filter(device => !device.active && !device.rootFolderDeleted)
         let reuseDeviceId: string | undefined
         let reuseDeviceName: string | undefined
         if (previous.length > 0) {
