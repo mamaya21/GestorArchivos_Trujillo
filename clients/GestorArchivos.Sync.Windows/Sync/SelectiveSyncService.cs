@@ -481,6 +481,16 @@ public sealed class SelectiveSyncService
                 throw new InvalidOperationException(
                     $"El archivo remoto cambió antes de mover '{plan.Destination}'.");
 
+            // El contenido local no puede haber cambiado durante el análisis.
+            if (!File.Exists(plan.Destination))
+                throw new InvalidOperationException(
+                    $"El archivo destino desapareció: '{plan.Destination}'.");
+            ValidatePathWithoutLinks(plan.Destination);
+            if (!HashesEqual(await HashLocalAsync(plan.Destination,
+                    cancellationToken), plan.Baseline.LocalHash))
+                throw new InvalidOperationException(
+                    $"El archivo destino cambió: '{plan.Destination}'.");
+
             // Cada paso es reintentable: si el servidor aceptó el cambio
             // antes de una interrupción, no se vuelve a ejecutar.
             if (remote.CarpetaId != plan.FolderId)
