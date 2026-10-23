@@ -830,10 +830,18 @@ public sealed class SelectiveSyncService
             }
             if (descendantFiles.Count == 0)
             {
-                // An empty folder has no content-based move identity.
-                // Do not abort unrelated sync work, but do not guess a
-                // destination or detach/delete the remote folder either.
-                if (_reportedMissingFolders.Add(folder.RutaLocal))
+                // Empty folders have no content hash to establish a move.
+                // A matching Recycle Bin record is positive evidence of deletion;
+                // absence alone (including after device re-registration) is not.
+                if (!_suppressDestructiveOperations &&
+                    IsInWindowsRecycleBin(folder.RutaLocal))
+                {
+                    await _api.TrashSelectedFolderAsync(folder.CarpetaRemotaId!.Value,
+                        cancellationToken);
+                    _reportedMissingFolders.Remove(folder.RutaLocal);
+                    Console.WriteLine($"[SyncFolder] Carpeta vacía eliminada en Windows enviada a papelera web: {folder.RutaLocal}");
+                }
+                else if (_reportedMissingFolders.Add(folder.RutaLocal))
                     Console.WriteLine($"[SyncFolder] Carpeta local ausente: " +
                         $"{folder.RutaLocal}. Podría estar eliminada o renombrada; " +
                         "se conserva el remoto hasta tener evidencia.");
