@@ -767,7 +767,7 @@ export default function FilesPage() {
     if (!destinationFolderId || upload || moving) return
     let completed = 0
     let skipped = 0
-    let applyToAll: 'skip' | 'keepBoth' | null = null
+    let applyToAll: 'skip' | 'keepBoth' | 'replace' | null = null
     setMoving(true)
     setError('')
     try {
@@ -782,7 +782,7 @@ export default function FilesPage() {
           fileIds: entry.kind === 'files' ? [entry.id] : [],
           folderIds: entry.kind === 'folders' ? [entry.id] : [],
         }
-        let resolution: 'skip' | 'keepBoth' | undefined = applyToAll ?? undefined
+        let resolution: 'skip' | 'keepBoth' | 'replace' | undefined = applyToAll ?? undefined
         let result: { skipped?: boolean } | undefined
         try {
           result = await apiRequest('/files/copy-selection', {
@@ -797,16 +797,19 @@ export default function FilesPage() {
               title: 'Nombre duplicado',
               text: `Ya existe "${source.nombre}" en la carpeta de destino. ¿Qué deseas hacer?`,
               showDenyButton: true,
+              footer: 'Para reemplazar, selecciona la opción Reemplazar en el selector.',
+              input: 'radio',
+              inputOptions: { keepBoth: 'Conservar ambos', replace: 'Reemplazar (guardar versión anterior)', skip: 'Omitir' },
+              inputValue: 'keepBoth',
               showCancelButton: true,
-              confirmButtonText: 'Conservar ambos',
+              confirmButtonText: 'Aplicar',
               denyButtonText: 'Omitir',
               cancelButtonText: 'Cancelar operación',
-              input: 'checkbox',
-              inputPlaceholder: 'Aplicar a todos',
+              showLoaderOnConfirm: false,
+
             })
             if (choice.isDismissed) break
-            resolution = choice.isConfirmed ? 'keepBoth' : 'skip'
-            if (choice.value === 1 || choice.value === '1') applyToAll = resolution
+            resolution = choice.isDenied ? 'skip' : (choice.value as 'skip' | 'keepBoth' | 'replace')
           }
           result = await apiRequest('/files/copy-selection', {
             method: 'POST',
