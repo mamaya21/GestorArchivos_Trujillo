@@ -327,7 +327,7 @@ public sealed class SelectiveSyncService
             }
             record.Observations++;
             if (record.Observations < 3 ||
-                now - record.FirstSeenUtc < TimeSpan.FromMinutes(2))
+                now - record.FirstSeenUtc < TimeSpan.FromSeconds(15))
                 continue;
 
             // Do not trash remotely changed content using an old local observation.
