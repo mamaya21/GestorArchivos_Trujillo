@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -358,6 +360,10 @@ public sealed class SyncApiClient : ISyncApiClient
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
         ArgumentNullException.ThrowIfNull(content);
 
+        if (content.CanSeek && content.Length - content.Position > 64L * 1024 * 1024)
+            return await CreateResumableRemoteFileAsync(
+                folderId, fileName, localPath, content, cancellationToken);
+
         using var form = new MultipartFormDataContent();
         using var fileContent = new StreamContent(content);
 
@@ -380,6 +386,124 @@ public sealed class SyncApiClient : ISyncApiClient
             ?? throw new InvalidOperationException(
                 "El servidor devolvió una respuesta de archivo atómico vacía.");
     }
+
+    private async Task<AtomicSyncFileResult> CreateResumableRemoteFileAsync(
+        Guid folderId, string fileName, string localPath, Stream content,
+        CancellationToken cancellationToken)
+    {
+        var start = content.Position;
+        var size = content.Length - start;
+        var hash = Convert.ToHexString(
+            await SHA256.HashDataAsync(content, cancellationToken));
+        content.Position = start;
+
+        var checkpointRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GestorArchivos", "Sync", "uploads");
+        Directory.CreateDirectory(checkpointRoot);
+        var key = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(folderId + "|" + localPath)));
+        var checkpointPath = Path.Combine(checkpointRoot, key + ".json");
+
+        ResumableCheckpoint? checkpoint = null;
+        if (File.Exists(checkpointPath))
+        {
+            try
+            {
+                checkpoint = JsonSerializer.Deserialize<ResumableCheckpoint>(
+                    await File.ReadAllTextAsync(checkpointPath, cancellationToken));
+            }
+            catch (JsonException)
+            {
+                checkpoint = null;
+            }
+        }
+
+        if (checkpoint is not null &&
+            (checkpoint.FileSize != size || checkpoint.Hash != hash ||
+             checkpoint.FileName != fileName))
+            checkpoint = null;
+
+        ResumableStatus? status = null;
+        if (checkpoint is not null)
+        {
+            using var lookup = await _httpClient.GetAsync(
+                $"api/sync/uploads/{checkpoint.UploadId}/status", cancellationToken);
+            if (lookup.StatusCode == HttpStatusCode.NotFound)
+                checkpoint = null;
+            else
+            {
+                await EnsureSuccessAsync(lookup, cancellationToken);
+                status = await lookup.Content.ReadFromJsonAsync<ResumableStatus>(
+                    cancellationToken: cancellationToken);
+                if (status is null || status.FolderId != folderId ||
+                    status.FileSize != size || status.FileName != fileName)
+                {
+                    checkpoint = null;
+                    status = null;
+                }
+            }
+        }
+
+        if (checkpoint is null)
+        {
+            using var initialized = await _httpClient.PostAsJsonAsync(
+                "api/sync/uploads/initialize",
+                new { folderId, fileName, fileSize = size }, cancellationToken);
+            await EnsureSuccessAsync(initialized, cancellationToken);
+            var session = await initialized.Content.ReadFromJsonAsync<ResumableSession>(
+                cancellationToken: cancellationToken)
+                ?? throw new InvalidOperationException("Sesión de carga vacía.");
+            checkpoint = new ResumableCheckpoint(session.UploadId, size, hash, fileName);
+            await File.WriteAllTextAsync(checkpointPath,
+                JsonSerializer.Serialize(checkpoint), cancellationToken);
+            status = new ResumableStatus(folderId, fileName, size,
+                session.ChunkSize, session.ExpectedChunkCount, Array.Empty<int>());
+        }
+
+        if (status is null || status.ChunkSize <= 0 ||
+            status.ChunkSize > 64 * 1024 * 1024)
+            throw new InvalidOperationException("Estado de carga inválido.");
+
+        var received = status.ReceivedChunks.ToHashSet();
+        var buffer = new byte[status.ChunkSize];
+        for (var index = 0; index < status.ExpectedChunkCount; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (received.Contains(index))
+                continue;
+
+            var offset = (long)index * status.ChunkSize;
+            var length = (int)Math.Min(status.ChunkSize, size - offset);
+            content.Position = start + offset;
+            await content.ReadExactlyAsync(buffer.AsMemory(0, length), cancellationToken);
+            using var payload = new ByteArrayContent(buffer, 0, length);
+            using var uploaded = await _httpClient.PutAsync(
+                $"api/sync/uploads/{checkpoint.UploadId}/chunks/{index}",
+                payload, cancellationToken);
+            await EnsureSuccessAsync(uploaded, cancellationToken);
+        }
+
+        using var completed = await _httpClient.PostAsJsonAsync(
+            $"api/sync/files/atomic/uploads/{checkpoint.UploadId}/complete",
+            new { localPath }, cancellationToken);
+        await EnsureSuccessAsync(completed, cancellationToken);
+        var result = await completed.Content.ReadFromJsonAsync<AtomicSyncFileResult>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("Confirmación de carga vacía.");
+        File.Delete(checkpointPath);
+        return result;
+    }
+
+    private sealed record ResumableCheckpoint(
+        Guid UploadId, long FileSize, string Hash, string FileName);
+
+    private sealed record ResumableSession(
+        Guid UploadId, int ChunkSize, int ExpectedChunkCount);
+
+    private sealed record ResumableStatus(
+        Guid FolderId, string FileName, long FileSize,
+        int ChunkSize, int ExpectedChunkCount, int[] ReceivedChunks);
 
     private static async Task EnsureSuccessAsync(
         HttpResponseMessage response,
