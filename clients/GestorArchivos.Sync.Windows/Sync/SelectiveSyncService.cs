@@ -95,6 +95,12 @@ public sealed class SelectiveSyncService
             }
         }
 
+        // Antes de cualquier escritura, detectar movimientos o renombrados locales
+        // ambiguos. Sin esta barrera el recorrido por nombre puede crear otro
+        // archivo remoto y después enviar el original a la papelera.
+        await GuardAgainstUnresolvedLocalMovesAsync(
+            selections, cancellationToken);
+
         await _mapping.PrepareMappingsAsync(cancellationToken);
         await _mapping.CreateMissingFoldersAsync(cancellationToken);
 
@@ -131,6 +137,74 @@ public sealed class SelectiveSyncService
 
         await RefreshBaselineAsync(cancellationToken);
         await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
+    }
+
+    private async Task GuardAgainstUnresolvedLocalMovesAsync(
+        IReadOnlyList<Selection> selections,
+        CancellationToken cancellationToken)
+    {
+        var items = await _api.GetItemsAsync(cancellationToken);
+        var baselines = await _baselines.LoadAsync(cancellationToken);
+        var baselineById = baselines
+            .GroupBy(x => x.SyncItemId)
+            .ToDictionary(x => x.Key, x => x.First());
+
+        foreach (var selection in selections.Where(x => x.Kind == 1))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var root = Path.GetFullPath(selection.Path);
+            var rootPrefix = Path.TrimEndingDirectorySeparator(root) +
+                Path.DirectorySeparatorChar;
+
+            // La carpeta raíz es una selección explícita: no se interpreta
+            // como una carpeta movida por el detector.
+            var mapped = items.Where(x =>
+                x.RutaLocal.StartsWith(rootPrefix,
+                    StringComparison.OrdinalIgnoreCase)).ToList();
+
+            var missingFiles = mapped.Where(x =>
+                x.Tipo == SyncItemType.File &&
+                x.ArchivoRemotoId.HasValue &&
+                !File.Exists(x.RutaLocal)).ToList();
+
+            if (missingFiles.Count == 0)
+                continue;
+
+            var candidates = Directory.EnumerateFiles(
+                    root, "*", SearchOption.AllDirectories)
+                .Where(x => !IsInternalSyncFileName(Path.GetFileName(x)))
+                .Where(x => !mapped.Any(item =>
+                    PathsEqual(item.RutaLocal, x)))
+                .ToList();
+
+            foreach (var missing in missingFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!baselineById.TryGetValue(missing.SyncItemId,
+                        out var baseline) ||
+                    baseline.RemoteFileId != missing.ArchivoRemotoId ||
+                    string.IsNullOrWhiteSpace(baseline.LocalHash))
+                    continue;
+
+                foreach (var candidate in candidates)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ValidatePathWithoutLinks(candidate);
+                    var hash = await HashLocalAsync(
+                        candidate, cancellationToken);
+
+                    if (HashesEqual(hash, baseline.LocalHash))
+                    {
+                        throw new InvalidOperationException(
+                            $"Posible renombrado o movimiento detectado: " +
+                            $"'{missing.RutaLocal}' -> '{candidate}'. " +
+                            "Se bloqueó el ciclo para conservar la identidad " +
+                            "remota y evitar una eliminación o duplicación.");
+                    }
+                }
+            }
+        }
     }
 
     private async Task SyncSelectedFileAsync(
