@@ -117,11 +117,16 @@ public class FoldersController : ControllerBase
             }
         }
 
-        var protectedFileIds = (await _dbContext.ElementosSync.AsNoTracking()
-            .Where(x => x.Activo && x.Tipo == TipoElementoSync.Archivo &&
-                        x.ArchivoRemotoId.HasValue)
-            .Select(x => x.ArchivoRemotoId!.Value)
-            .ToListAsync(cancellationToken)).ToHashSet();
+        var protectedFileIds = (await (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join file in _dbContext.Archivos.AsNoTracking()
+                on item.ArchivoRemotoId equals file.Id
+            where item.Activo && item.Tipo == TipoElementoSync.Archivo &&
+                  file.CarpetaId == device.CarpetaRaizId
+            select file.Id
+        ).ToListAsync(cancellationToken)).ToHashSet();
 
         var files = parentId.HasValue
             ? await _dbContext.Archivos
