@@ -577,6 +577,9 @@ export default function FilesPage() {
       fileIds: [...selectedFiles],
       sourceFolderId: currentFolderId,
     })
+    setSelectedFolders(new Set())
+    setSelectedFiles(new Set())
+    setCopyClipboard(null)
     setMessage('Elementos cortados. Abre la carpeta de destino y selecciona Pegar.')
   }
 
@@ -612,7 +615,7 @@ export default function FilesPage() {
       return
     }
     if (clipboard.sourceFolderId === destinationFolderId) {
-      setMoveClipboard(null)
+      setMessage('Los elementos ya están en esta carpeta. Elige otra carpeta para moverlos.')
       return
     }
     if (clipboard.folderIds.includes(destinationFolderId)) {
@@ -1467,27 +1470,27 @@ export default function FilesPage() {
           }
         />
 
-        {copyClipboard && (
-          <div className="selection-actions">
-            <span>Copiado: {copyClipboard.nombre}</span>
-            <button type="button" disabled={!currentFolderId || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
-            <button type="button" onClick={() => setCopyClipboard(null)}>Cancelar</button>
-          </div>
-        )}
-        {moveClipboard && (
-          <div className="selection-actions">
-            <span>{moveClipboard.folderIds.length + moveClipboard.fileIds.length} cortado(s)</span>
-            <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={() => void moveItems(moveClipboard, currentFolderId)}>Pegar aquí</button>
-            <button type="button" onClick={() => setMoveClipboard(null)}>Cancelar</button>
-          </div>
-        )}
-        {selectedCount > 0 && (
-          <div className="selection-actions">
-            <strong>
-              {selectedCount} seleccionado(s)
-            </strong>
-
-            <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={cutSelected}>Cortar selección</button>
+        {(copyClipboard || moveClipboard || selectedCount > 0) && (
+          <div className="selection-actions explorer-selection-bar">
+            {moveClipboard ? (
+              <>
+                <span className="explorer-selection-count">{moveClipboard.folderIds.length + moveClipboard.fileIds.length} en espera de mover</span>
+                <button type="button" disabled={!currentFolderId || currentFolderId === moveClipboard.sourceFolderId || moving || !!upload} onClick={() => void moveItems(moveClipboard, currentFolderId)}>Pegar aquí</button>
+                <button type="button" onClick={() => setMoveClipboard(null)}>Cancelar</button>
+              </>
+            ) : copyClipboard ? (
+              <>
+                <span className="explorer-selection-count">Copiado: {copyClipboard.nombre}</span>
+                <button type="button" disabled={!currentFolderId || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
+                <button type="button" onClick={() => setCopyClipboard(null)}>Cancelar</button>
+              </>
+            ) : (
+              <>
+                <span className="explorer-selection-count">{selectedCount} seleccionado(s)</span>
+                <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={cutSelected}>Cortar</button>
+                <button type="button" onClick={() => { setSelectedFolders(new Set()); setSelectedFiles(new Set()) }}>Deseleccionar</button>
+              </>
+            )}
           </div>
         )}
       </div>
