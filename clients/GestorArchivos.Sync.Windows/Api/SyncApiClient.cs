@@ -430,7 +430,28 @@ public sealed class SyncApiClient : ISyncApiClient
             using var lookup = await _httpClient.GetAsync(
                 $"api/sync/uploads/{checkpoint.UploadId}/status", cancellationToken);
             if (lookup.StatusCode == HttpStatusCode.NotFound)
-                checkpoint = null;
+            {
+                // The server removes the session after committing. If the final
+                // HTTP response was lost, replay through the atomic endpoint:
+                // it verifies the exact bytes before acknowledging the mapping.
+                // A changed remote file produces a conflict, never false success.
+                content.Position = start;
+                using var form = new MultipartFormDataContent();
+                using var fileContent = new StreamContent(content);
+                fileContent.Headers.ContentType =
+                    new MediaTypeHeaderValue("application/octet-stream");
+                form.Add(fileContent, "file", fileName);
+                form.Add(new StringContent(folderId.ToString()), "folderId");
+                form.Add(new StringContent(localPath), "localPath");
+                using var replay = await _httpClient.PostAsync(
+                    "api/sync/files/atomic", form, cancellationToken);
+                await EnsureSuccessAsync(replay, cancellationToken);
+                var confirmed = await replay.Content.ReadFromJsonAsync<AtomicSyncFileResult>(
+                    cancellationToken: cancellationToken)
+                    ?? throw new InvalidOperationException("Confirmación de recuperación vacía.");
+                File.Delete(checkpointPath);
+                return confirmed;
+            }
             else
             {
                 await EnsureSuccessAsync(lookup, cancellationToken);
