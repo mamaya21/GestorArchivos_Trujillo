@@ -288,6 +288,8 @@ public sealed class SelectiveSyncService
             : new List<MissingRoot>();
         var now = DateTime.UtcNow;
         var items = await _api.GetItemsAsync(cancellationToken);
+        var snapshot = await _api.GetSnapshotAsync(cancellationToken);
+        var baselines = await _baselines.LoadAsync(cancellationToken);
         var changed = false;
         foreach (var selection in selections.ToArray())
         {
@@ -338,6 +340,23 @@ public sealed class SelectiveSyncService
             if (record.Observations < 3 ||
                 now - record.FirstSeenUtc < TimeSpan.FromMinutes(2))
                 continue;
+
+            // Do not trash remotely changed content using an old local observation.
+            var associatedFiles = items.Where(x => x.Tipo == SyncItemType.File &&
+                x.ArchivoRemotoId.HasValue &&
+                (PathsEqual(x.RutaLocal, selection.Path) ||
+                 (selection.Kind == 1 && IsDescendantPath(x.RutaLocal, selection.Path)))).ToList();
+            if (associatedFiles.Any(x =>
+            {
+                var baseline = baselines.SingleOrDefault(y =>
+                    y.SyncItemId == x.SyncItemId && y.RemoteFileId == x.ArchivoRemotoId);
+                var remote = snapshot.Files.SingleOrDefault(y => y.Id == x.ArchivoRemotoId);
+                return baseline is null || remote is null ||
+                    !HashesEqual(baseline.RemoteHash, remote.HashSha256);
+            }))
+                throw new InvalidOperationException(
+                    $"La raíz '{selection.Path}' desapareció localmente, pero tiene " +
+                    "cambios remotos sin conciliar. Se bloqueó el envío a papelera.");
 
             // Persist the request before removing the selection. If interrupted,
             // ProcessRemovalRequestsAsync will resume without losing the remote object.
