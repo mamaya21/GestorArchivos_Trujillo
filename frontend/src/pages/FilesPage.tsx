@@ -1767,105 +1767,8 @@ export default function FilesPage() {
       onDrop={handleDrop}
       onDragEnd={() => setDraggedItem(null)}
     >
-      <div className="toolbar">
-        <div>
-
-
-
-          <div className="file-location-row">
-          <div className="folder-navigation">
-            <button
-              type="button"
-              title="Atrás"
-              disabled={historyIndex <= 0}
-              onClick={navigateBack}
-            >
-              ←
-            </button>
-
-            <button
-              type="button"
-              title="Adelante"
-              disabled={historyIndex >= navigationHistory.length - 1}
-              onClick={navigateForward}
-            >
-              →
-            </button>
-          </div>
-          <div className="breadcrumbs">
-            {breadcrumbs.map((item, index) => (
-              <span key={item.id ?? 'root'}>
-                {index > 0 && <b>/</b>}
-
-                <button
-                  type="button"
-                  onDragOver={(event) => { if (draggedItem && item.id) event.preventDefault() }}
-                  onDrop={(event) => { if (item.id) handleInternalDrop(event, item.id) }}
-                  onClick={() =>
-                    navigateBreadcrumb(index)
-                  }
-                >
-                  {item.nombre}
-                </button>
-              </span>
-            ))}
-          </div>
-          </div>
-          <h1>Archivos</h1>
-
-
-        </div>
-
-        <div className="toolbar-actions">
-          <div className="file-primary-actions">
-            <button className="file-action-primary" type="button" disabled={!currentFolderId || !!upload} onClick={() => void createTextFile()}>
-              <span aria-hidden="true">＋</span> Nuevo archivo
-            </button>
-            <button type="button" disabled={!!upload} onClick={createFolder}>
-              <span aria-hidden="true">＋</span> Nueva carpeta
-            </button>
-            <button type="button" disabled={!currentFolderId || !!upload} onClick={() => fileInput.current?.click()}>
-              <span aria-hidden="true">↑</span> Subir archivos
-            </button>
-          </div>
-          <div className="file-header-search">
-        <input
-          className="search-box"
-          type="search"
-          placeholder="Buscar archivos y carpetas..."
-          value={search}
-          onChange={(event) =>
-            setSearch(event.target.value)
-          }
-        />
-          </div>
-          <details className="file-sync-dropdown" onToggle={(event) => {
-              if (event.currentTarget.open) void refreshSyncLinkStatus()
-            }}>
-            <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
-            <div className="file-sync-dropdown-menu">
-              {syncLinkedHere && <button
-                type="button"
-                onClick={(event) => {
-                  event.currentTarget.closest('details')?.removeAttribute('open')
-                  void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
-                    .then(response => {
-                      if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
-                    })
-                    .catch(() => void Swal.fire({
-                      icon: 'error',
-                      title: 'Selector de sincronización no disponible',
-                      text: 'Abre la aplicación de sincronización de Gestor de Archivos en este equipo e inténtalo nuevamente.',
-                    }))
-                }}
-              >Seleccionar sincronización</button>}
-              <button type="button" onClick={(event) => {
-                event.currentTarget.closest('details')?.removeAttribute('open')
-                void openSyncManagement()
-              }}>Administrar sincronización</button>
-            </div>
-          </details>
-
+      <div className="file-page-heading"><h1>Archivos</h1></div>
+      <div className="file-hidden-inputs">
           <input
             ref={fileInput}
             type="file"
@@ -1897,9 +1800,7 @@ export default function FilesPage() {
               }
             }}
           />
-        </div>
       </div>
-
       <div className="explorer-tools">
 
 
@@ -2006,6 +1907,102 @@ export default function FilesPage() {
       <div className="explorer" {...touchMenu('background')} onContextMenu={(event) => {
         if (event.target === event.currentTarget) showContextMenu(event, 'background')
       }}>
+        <div className="file-explorer-commandbar">
+          <div className="file-explorer-navigation">
+          <div className="file-location-row">
+          <div className="folder-navigation">
+            <button
+              type="button"
+              title="Atrás"
+              disabled={historyIndex <= 0}
+              onClick={navigateBack}
+            >
+              ←
+            </button>
+
+            <button
+              type="button"
+              title="Adelante"
+              disabled={historyIndex >= navigationHistory.length - 1}
+              onClick={navigateForward}
+            >
+              →
+            </button>
+          </div>
+          <div className="breadcrumbs">
+            {breadcrumbs.map((item, index) => (
+              <span key={item.id ?? 'root'}>
+                {index > 0 && <b>/</b>}
+
+                <button
+                  type="button"
+                  onDragOver={(event) => { if (draggedItem && item.id) event.preventDefault() }}
+                  onDrop={(event) => { if (item.id) handleInternalDrop(event, item.id) }}
+                  onClick={() =>
+                    navigateBreadcrumb(index)
+                  }
+                >
+                  {item.nombre}
+                </button>
+              </span>
+            ))}
+          </div>
+          </div>
+          </div>
+          <div className="file-explorer-operations">
+          <div className="file-primary-actions">
+            <button className="file-action-primary" type="button" disabled={!currentFolderId || !!upload} onClick={() => void createTextFile()}>
+              <span aria-hidden="true">＋</span> Nuevo archivo
+            </button>
+            <button type="button" disabled={!!upload} onClick={createFolder}>
+              <span aria-hidden="true">＋</span> Nueva carpeta
+            </button>
+            <button type="button" disabled={!currentFolderId || !!upload} onClick={() => fileInput.current?.click()}>
+              <span aria-hidden="true">↑</span> Subir archivos
+            </button>
+          </div>
+          </div>
+          <div className="file-explorer-search">
+          <div className="file-header-search">
+        <input
+          className="search-box"
+          type="search"
+          placeholder="Buscar archivos y carpetas..."
+          value={search}
+          onChange={(event) =>
+            setSearch(event.target.value)
+          }
+        />
+          </div>
+          <details className="file-sync-dropdown" onToggle={(event) => {
+              if (event.currentTarget.open) void refreshSyncLinkStatus()
+            }}>
+            <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
+            <div className="file-sync-dropdown-menu">
+              {syncLinkedHere && <button
+                type="button"
+                onClick={(event) => {
+                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+                    .then(response => {
+                      if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
+                    })
+                    .catch(() => void Swal.fire({
+                      icon: 'error',
+                      title: 'Selector de sincronización no disponible',
+                      text: 'Abre la aplicación de sincronización de Gestor de Archivos en este equipo e inténtalo nuevamente.',
+                    }))
+                }}
+              >Seleccionar sincronización</button>}
+              <button type="button" onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open')
+                void openSyncManagement()
+              }}>Administrar sincronización</button>
+            </div>
+          </details>
+
+          </div>
+        </div>
         <div className="explorer-header explorer-header-select">
           <span>
             <input
