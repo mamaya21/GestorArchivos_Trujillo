@@ -76,6 +76,10 @@ public class FoldersController : ControllerBase
             select folder.Id
         ).ToListAsync(cancellationToken)).ToHashSet();
 
+        var deviceContainerIds = (await _dbContext.DispositivosSync.AsNoTracking()
+            .Select(x => x.CarpetaRaizId)
+            .ToListAsync(cancellationToken)).ToHashSet();
+
         var candidateFolders = await _dbContext.Carpetas
             .AsNoTracking()
             .Where(x =>
@@ -107,7 +111,8 @@ public class FoldersController : ControllerBase
                 {
                     folder.Id, folder.Nombre, folder.CarpetaPadreId,
                     folder.FechaCreacion, folder.FechaModificacion,
-                    selectorManaged = protectedIds.Contains(folder.Id)
+                    selectorManaged = protectedIds.Contains(folder.Id),
+                    deviceContainer = deviceContainerIds.Contains(folder.Id)
                 });
             }
         }
