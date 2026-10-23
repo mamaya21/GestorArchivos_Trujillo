@@ -20,8 +20,6 @@ public sealed class SelectiveSyncService
     private readonly SelectiveSyncMappingService _mapping;
     private bool _suppressDestructiveOperations;
 
-    private static readonly string RestorePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "restore-requests.json");
-
     private static readonly string RemovalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "removal-requests.json");
 
     private static readonly string SelectionGuardPath = Path.Combine(
@@ -110,12 +108,6 @@ public sealed class SelectiveSyncService
             selections, cancellationToken);
 
         await ReconcileRemoteFileRenamesAsync(selections, cancellationToken);
-
-        foreach (var selection in selections.Where(x => x.Kind == 1))
-        {
-            await EnsureStillSelectedAsync(selection.Path, cancellationToken);
-            await _api.RestoreSelectedFolderAsync(selection.Path, cancellationToken);
-        }
 
         await _mapping.PrepareMappingsAsync(cancellationToken);
         await _mapping.CreateMissingFoldersAsync(cancellationToken);
