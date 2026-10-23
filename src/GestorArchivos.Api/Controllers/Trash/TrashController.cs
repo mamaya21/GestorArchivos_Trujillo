@@ -65,10 +65,19 @@ public sealed class TrashController : ControllerBase
                 })
                 .ToListAsync(cancellationToken);
 
+        // Mostrar únicamente raíces eliminadas. Los descendientes
+        // siguen dentro de su carpeta original y se restauran con ella.
+        var trashedFolderIds = folderCandidates
+            .Select(x => x.Id)
+            .ToHashSet();
         var visibleFolders = new List<object>();
 
         foreach (var folder in folderCandidates)
         {
+            if (folder.CarpetaPadreId.HasValue &&
+                trashedFolderIds.Contains(folder.CarpetaPadreId.Value))
+                continue;
+
             if (isAdmin ||
                 await _permissionService
                     .HasPermissionIncludingTrashAsync(
@@ -111,6 +120,11 @@ public sealed class TrashController : ControllerBase
 
         foreach (var file in fileCandidates)
         {
+            // Los archivos de carpetas eliminadas pertenecen al árbol
+            // de esa carpeta; no son entradas independientes de papelera.
+            if (trashedFolderIds.Contains(file.CarpetaId))
+                continue;
+
             if (isAdmin ||
                 await _permissionService
                     .HasPermissionIncludingTrashAsync(
