@@ -124,9 +124,14 @@ public sealed class SyncResumableUploadController : ControllerBase
         return NoContent();
     }
 
-    private bool TryIdentity(out Guid deviceId, out Guid userId) =>
-        Guid.TryParse(User.FindFirstValue("device_id"), out deviceId) &&
-        Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
+    private bool TryIdentity(out Guid deviceId, out Guid userId)
+    {
+        var validDevice = Guid.TryParse(
+            User.FindFirstValue("device_id"), out deviceId);
+        var validUser = Guid.TryParse(
+            User.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
+        return validDevice && validUser;
+    }
 
     private async Task<bool> CanWriteAsync(
         Guid deviceId, Guid userId, Guid folderId, CancellationToken cancellationToken)
