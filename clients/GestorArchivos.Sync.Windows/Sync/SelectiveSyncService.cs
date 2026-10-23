@@ -882,9 +882,16 @@ public sealed class SelectiveSyncService
 
             if (existingMapping is not null)
             {
-                throw new InvalidOperationException(
-                    $"Se bloqueó la recreación de '{localFolder.Value}'. " +
-                    "La carpeta ya tiene una asociación remota registrada.");
+                if (existingMapping.Tipo != SyncItemType.Folder ||
+                    !existingMapping.CarpetaRemotaId.HasValue)
+                    throw new InvalidOperationException(
+                        $"La asociación de '{localFolder.Value}' tiene un tipo incompatible.");
+
+                // El servidor solo desactiva la asociación si comprueba que
+                // la carpeta anterior está realmente en la papelera.
+                // No eliminar asociaciones de carpetas activas o movidas.
+                await _api.DetachTrashedItemAsync(
+                    existingMapping.SyncItemId, cancellationToken);
             }
 
             if (IsReparsePoint(localFolder.Value))
