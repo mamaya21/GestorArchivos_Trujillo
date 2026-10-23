@@ -968,7 +968,7 @@ export default function FilesPage() {
     const multiple = folderIds.length + fileIds.length > 1
     if (file?.selectorManaged && (action === 'rename' || action === 'delete' || action === 'cut')) return
     if (folder && (
-      (folder.selectorManaged || (!folder.carpetaPadreId && !folder.deviceContainer)) &&
+      (folder.selectorManaged) &&
       (action === 'rename' || action === 'delete' || action === 'cut') ||
       folder.deviceContainer && (action === 'delete' || action === 'cut')
     )) return
@@ -2189,9 +2189,9 @@ export default function FilesPage() {
               ...((contextMenu.file || contextMenu.folder) ? [{ id: 'download', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 || !!contextMenu.folder ? 'Descargar ZIP' : 'Descargar', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 100 }] : []),
               ...(contextMenu.file ? [{ id: 'versions', label: 'Historial de versiones', disabled: selectedCount > 1 && selectedFiles.has(contextMenu.file.id) }] : []),
               ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 }] : []),
-              ...((contextMenu.file || (contextMenu.folder && contextMenu.folder.carpetaPadreId)) ? [{ id: 'copy', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Copiar selección (${selectedCount})` : 'Copiar' }] : []),
+              ...((contextMenu.file || (contextMenu.folder && !contextMenu.folder.deviceContainer)) ? [{ id: 'copy', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Copiar selección (${selectedCount})` : 'Copiar' }] : []),
               ...(currentFolderId ? [{ id: 'cut', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.folder?.deviceContainer || !!contextMenu.file?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged))), label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
-              ...(!contextMenu.folder || contextMenu.folder.carpetaPadreId || contextMenu.folder.deviceContainer ? [
+              ...(!contextMenu.folder || !contextMenu.folder.selectorManaged ? [
                 { id: 'rename', label: 'Renombrar', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.file?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
                 { id: 'delete', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.folder?.deviceContainer || !!contextMenu.file?.selectorManaged, label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Mover selección a papelera (${selectedCount})` : 'Mover a papelera' },
               ] : []),
