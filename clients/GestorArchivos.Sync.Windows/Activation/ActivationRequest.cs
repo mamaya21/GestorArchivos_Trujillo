@@ -6,5 +6,6 @@ public sealed class ActivationRequest
     public string DeviceName { get; set; } = string.Empty;
     public Guid RootFolderId { get; set; }
     public string RootFolderName { get; set; } = string.Empty;
+    public bool StartFresh { get; set; }
     public string Token { get; set; } = string.Empty;
 }
