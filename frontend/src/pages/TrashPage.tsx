@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { apiRequest } from '../api/client'
+import { ApiError, apiRequest } from '../api/client'
+import Swal from 'sweetalert2'
 
 interface TrashFolder {
   type: 'folder'
@@ -102,6 +103,8 @@ export default function TrashPage() {
     const failed: string[] = []
     const failedKeys: string[] = []
     let succeeded = 0
+    let skipped = 0
+    let applyToAll: 'skip' | 'keepBoth' | null = null
 
     // Reintentar carpetas pendientes cuando la restauración de su padre
     // permita completar una operación posterior.
@@ -122,6 +125,45 @@ export default function TrashPage() {
             succeeded++
             progress = true
           } catch (err) {
+            if (action === 'restore' && err instanceof ApiError && err.status === 409 &&
+                /mismo nombre|ese nombre/i.test(err.message)) {
+              let resolution = applyToAll
+              if (!resolution) {
+                const choice = await Swal.fire({
+                  icon: 'warning',
+                  title: 'Conflicto al restaurar',
+                  text: `Ya existe un elemento llamado "${item.nombre}".`,
+                  showCancelButton: true,
+                  showDenyButton: true,
+                  confirmButtonText: 'Conservar ambos',
+                  denyButtonText: 'Omitir',
+                  cancelButtonText: 'Cancelar',
+                  input: 'checkbox',
+                  inputPlaceholder: 'Aplicar a todos',
+                })
+                if (choice.isDismissed) {
+                  failedKeys.push(itemKey(item))
+                  failed.push(`${item.nombre}: restauración cancelada.`)
+                  continue
+                }
+                resolution = choice.isConfirmed ? 'keepBoth' : 'skip'
+                if (choice.value === 1 || choice.value === '1') applyToAll = resolution
+              }
+              try {
+                const response = await apiRequest<{ skipped?: boolean } | undefined>(
+                  `${url}/restore?conflictResolution=${resolution}`,
+                  { method: 'POST' },
+                )
+                if (response?.skipped) skipped++
+                else succeeded++
+                progress = true
+                continue
+              } catch (retryError) {
+                failedKeys.push(itemKey(item))
+                failed.push(`${item.nombre}: ${getError(retryError)}`)
+                continue
+              }
+            }
             if (action === 'restore' && pass < attempts - 1) {
               retry.push(item)
             } else {
@@ -142,7 +184,7 @@ export default function TrashPage() {
       }
 
       setSelected(failedKeys)
-      setNotice(`${succeeded} de ${items.length} elementos procesados correctamente.`)
+      setNotice(`${succeeded} procesados correctamente, ${skipped} omitidos de ${items.length} elementos.`)
       if (failed.length) setError(failed.join('\n'))
       try {
         const result = await apiRequest<TrashContents>('/trash')
