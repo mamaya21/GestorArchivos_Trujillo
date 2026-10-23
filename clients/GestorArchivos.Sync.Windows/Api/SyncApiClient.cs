@@ -154,6 +154,18 @@ public sealed class SyncApiClient : ISyncApiClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public async Task RenameRemoteFolderAsync(Guid folderId, string name, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync($"api/sync/folders/{folderId}/rename", new { name }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task MoveRemoteFolderAsync(Guid folderId, Guid destinationFolderId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync($"api/sync/folders/{folderId}/move", new { destinationFolderId }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     public async Task DeleteItemAsync(
         Guid syncItemId,
         CancellationToken cancellationToken = default)
