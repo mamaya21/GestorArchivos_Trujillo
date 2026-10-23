@@ -20,6 +20,8 @@ public sealed class SelectiveSyncService
     private readonly SelectiveSyncMappingService _mapping;
     private bool _suppressDestructiveOperations;
 
+    private static readonly string RestorePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "restore-requests.json");
+
     private static readonly string RemovalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "removal-requests.json");
 
     private static readonly string SelectionGuardPath = Path.Combine(
@@ -56,6 +58,7 @@ public sealed class SelectiveSyncService
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
         await ProcessRemovalRequestsAsync(selections, cancellationToken);
+        await ProcessRestoreRequestsAsync(selections, cancellationToken);
 
         var fingerprint = ComputeSelectionFingerprint(selections);
         var previousFingerprint = File.Exists(SelectionGuardPath)
@@ -1859,6 +1862,36 @@ public sealed class SelectiveSyncService
             throw new OperationCanceledException(
                 $"La selección fue retirada durante la sincronización: '{path}'.",
                 cancellationToken);
+    }
+
+    private async Task ProcessRestoreRequestsAsync(
+        IReadOnlyList<Selection> selections, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(RestorePath)) return;
+        var pending = JsonSerializer.Deserialize<List<string>>(
+            await File.ReadAllTextAsync(RestorePath, cancellationToken))
+            ?? throw new InvalidOperationException("Solicitudes de restauración inválidas.");
+        foreach (var path in pending.ToArray())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+                throw new InvalidOperationException("Ruta de restauración inválida.");
+            var fullPath = Path.GetFullPath(path);
+            if (!selections.Any(x => x.Kind == 1 && PathsEqual(x.Path, fullPath)))
+                throw new InvalidOperationException(
+                    $"La carpeta a restaurar no está seleccionada: '{fullPath}'.");
+            if (!Directory.Exists(fullPath))
+                throw new DirectoryNotFoundException(
+                    $"La carpeta local a restaurar no existe: '{fullPath}'.");
+            ValidatePathWithoutLinks(fullPath);
+            await _api.RestoreSelectedFolderAsync(fullPath, cancellationToken);
+            pending.Remove(path);
+            if (pending.Count == 0)
+                File.Delete(RestorePath);
+            else
+                await File.WriteAllTextAsync(RestorePath,
+                    JsonSerializer.Serialize(pending), cancellationToken);
+        }
     }
 
     private async Task ProcessRemovalRequestsAsync(
