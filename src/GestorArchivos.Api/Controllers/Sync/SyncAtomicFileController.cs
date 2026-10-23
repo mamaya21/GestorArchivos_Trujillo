@@ -150,12 +150,12 @@ public sealed class SyncAtomicFileController : ControllerBase
                 });
             }
 
-            if (!reuseTrashedMapping)
+            if (!reuseTrashedMapping && existingItem.ArchivoRemotoId is Guid mappedFileId)
             {
             var existingFile = await _db.Archivos
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
-                    x => x.Id == existingItem.ArchivoRemotoId.Value &&
+                    x => x.Id == mappedFileId &&
                          x.Estado == EstadoArchivo.Activo,
                     cancellationToken);
 
