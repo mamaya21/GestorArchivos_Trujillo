@@ -462,6 +462,9 @@ public sealed class SelectiveSyncService
                         $"La carpeta destino '{folderPath}' no tiene " +
                         "una asociación remota única y verificable.");
 
+                var newName = Path.GetFileName(destination);
+                ValidateRemoteName(newName);
+                var folderId = folderMappings[0].CarpetaRemotaId!.Value;
                 var remote = snapshot.Files.SingleOrDefault(x =>
                     x.Id == item.ArchivoRemotoId);
                 if (remote is null ||
@@ -473,9 +476,6 @@ public sealed class SelectiveSyncService
                         $"El archivo remoto de '{item.RutaLocal}' cambió. " +
                         "Se bloqueó el movimiento para proteger el historial.");
 
-                var newName = Path.GetFileName(destination);
-                ValidateRemoteName(newName);
-                var folderId = folderMappings[0].CarpetaRemotaId!.Value;
                 if (snapshot.Files.Any(x => x.Id != remote.Id &&
                     x.CarpetaId == folderId && NamesEqual(x.Nombre, newName)) ||
                     snapshot.Folders.Any(x => x.CarpetaPadreId == folderId &&
