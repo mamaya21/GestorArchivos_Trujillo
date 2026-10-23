@@ -274,6 +274,9 @@ public class FilesController : ControllerBase
         CopySelectionRequest request,
         CancellationToken cancellationToken)
     {
+        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
+                x => x.CarpetaRaizId == request.DestinationFolderId, cancellationToken))
+            return Conflict(new { message = "El destino principal de sincronización se administra desde el selector." });
         var destination = await _dbContext.Carpetas.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
         if (destination is null) return NotFound(new { message = "Carpeta de destino no disponible." });
