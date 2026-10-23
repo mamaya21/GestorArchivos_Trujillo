@@ -294,28 +294,85 @@ public class FilesController : ControllerBase
         return Ok(file);
     }
 
-    public sealed record DownloadZipRequest(Guid[] FileIds);
+    public sealed record DownloadZipRequest(Guid[]? FileIds, Guid[]? FolderIds);
 
     [HttpPost("download-zip")]
     public async Task<IActionResult> DownloadZip(
         [FromBody] DownloadZipRequest request,
         CancellationToken cancellationToken)
     {
-        var ids = request.FileIds?.Distinct().ToArray() ?? Array.Empty<Guid>();
-        if (ids.Length < 2 || ids.Length > 100)
-            return BadRequest(new { message = "Selecciona entre 2 y 100 archivos." });
+        var fileIds = (request.FileIds ?? Array.Empty<Guid>()).Distinct().ToArray();
+        var folderIds = (request.FolderIds ?? Array.Empty<Guid>()).Distinct().ToArray();
+        if (fileIds.Length + folderIds.Length is < 1 or > 100)
+            return BadRequest(new { message = "Selecciona entre 1 y 100 elementos." });
 
-        var files = await _dbContext.Archivos.AsNoTracking()
-            .Where(x => ids.Contains(x.Id) && x.Estado == EstadoArchivo.Activo)
-            .ToListAsync(cancellationToken);
-        if (files.Count != ids.Length)
-            return NotFound(new { message = "Alguno de los archivos ya no existe." });
-
+        const int maxFiles = 1000;
         const long maxBytes = 256L * 1024 * 1024;
-        if (files.Sum(x => x.TamanoBytes) > maxBytes)
-            return BadRequest(new { message = "La selección supera el límite de 256 MB para ZIP." });
 
-        foreach (var file in files)
+        var allFolders = await _dbContext.Carpetas.AsNoTracking()
+            .Where(x => !x.EnPapelera)
+            .Select(x => new { x.Id, x.Nombre, x.CarpetaPadreId })
+            .ToListAsync(cancellationToken);
+        var foldersById = allFolders.ToDictionary(x => x.Id);
+        if (folderIds.Any(id => !foldersById.ContainsKey(id)))
+            return NotFound(new { message = "Alguna carpeta no existe." });
+
+        var childrenByParent = allFolders
+            .Where(x => x.CarpetaPadreId.HasValue)
+            .ToLookup(x => x.CarpetaPadreId!.Value);
+
+        var selectedFolders = new Dictionary<Guid, string>();
+        var queue = new Queue<(Guid Id, string Path)>();
+        var usedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var folderId in folderIds)
+        {
+            var folder = foldersById[folderId];
+            var rootName = SafeZipName(folder.Nombre, folder.Id);
+            var candidate = rootName;
+            var suffix = 1;
+            while (!usedRoots.Add(candidate))
+                candidate = $"{rootName} ({suffix++})";
+            queue.Enqueue((folderId, candidate));
+        }
+
+        while (queue.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (id, path) = queue.Dequeue();
+            if (!selectedFolders.TryAdd(id, path))
+                continue;
+            if (selectedFolders.Count > 10000)
+                return BadRequest(new { message = "Demasiadas carpetas para una descarga ZIP." });
+            foreach (var child in childrenByParent[id])
+                queue.Enqueue((child.Id, $"{path}/{SafeZipName(child.Nombre, child.Id)}"));
+        }
+
+        foreach (var id in selectedFolders.Keys)
+        {
+            if (!await _permissionService.HasPermissionAsync(
+                    CurrentUserId(), id, PermisoCarpeta.Leer, cancellationToken))
+                return Forbid();
+        }
+
+        var allFiles = await _dbContext.Archivos.AsNoTracking()
+            .Where(x => x.Estado == EstadoArchivo.Activo &&
+                (fileIds.Contains(x.Id) || selectedFolders.Keys.Contains(x.CarpetaId)))
+            .ToListAsync(cancellationToken);
+        if (fileIds.Any(id => allFiles.All(x => x.Id != id)))
+            return NotFound(new { message = "Algún archivo no existe." });
+
+        var entries = new List<(Archivo File, string Path)>();
+        foreach (var file in allFiles)
+        {
+            if (selectedFolders.TryGetValue(file.CarpetaId, out var parentPath))
+                entries.Add((file, $"{parentPath}/{SafeZipName(file.Nombre, file.Id)}"));
+            else if (fileIds.Contains(file.Id))
+                entries.Add((file, SafeZipName(file.Nombre, file.Id)));
+        }
+        if (entries.Count > maxFiles || entries.Sum(x => x.File.TamanoBytes) > maxBytes)
+            return BadRequest(new { message = "Límite ZIP: 1000 archivos y 256 MB sin comprimir." });
+
+        foreach (var (file, _) in entries)
         {
             if (!await _permissionService.HasPermissionAsync(
                     CurrentUserId(), file.CarpetaId, PermisoCarpeta.Leer, cancellationToken))
@@ -329,17 +386,26 @@ public class FilesController : ControllerBase
         {
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
             {
-                var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var file in files)
+                var usedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var folder in selectedFolders.Values.OrderBy(x => x.Count(c => c == '/')))
                 {
-                    var name = Path.GetFileName(file.Nombre);
-                    if (string.IsNullOrWhiteSpace(name)) name = $"{file.Id:N}.bin";
-                    var baseName = Path.GetFileNameWithoutExtension(name);
-                    var extension = Path.GetExtension(name);
-                    var candidate = name;
+                    var folderEntry = folder.TrimEnd('/') + "/";
+                    if (usedPaths.Add(folderEntry))
+                        zip.CreateEntry(folderEntry);
+                }
+
+                foreach (var (file, path) in entries)
+                {
+                    var candidate = path;
                     var suffix = 1;
-                    while (!used.Add(candidate))
-                        candidate = $"{baseName} ({suffix++}){extension}";
+                    var parent = path.LastIndexOf('/');
+                    var prefix = parent >= 0 ? path[..(parent + 1)] : "";
+                    var name = parent >= 0 ? path[(parent + 1)..] : path;
+                    var stem = Path.GetFileNameWithoutExtension(name);
+                    var ext = Path.GetExtension(name);
+                    while (!usedPaths.Add(candidate))
+                        candidate = $"{prefix}{stem} ({suffix++}){ext}";
+
                     var entry = zip.CreateEntry(candidate, CompressionLevel.Fastest);
                     await using var source = await _fileStorage.OpenReadAsync(file.NombreFisico, cancellationToken);
                     await using var destination = entry.Open();
@@ -354,6 +420,15 @@ public class FilesController : ControllerBase
             await output.DisposeAsync();
             throw;
         }
+    }
+
+    private static string SafeZipName(string name, Guid id)
+    {
+        var safe = new string(name.Where(c => c != '/' && c != '\\' &&
+            c >= ' ' && c != ':' && c != '\u007f').ToArray()).Trim().Trim('.');
+        return string.IsNullOrWhiteSpace(safe) || safe is "." or ".."
+            ? id.ToString("N")
+            : safe;
     }
 
     [HttpGet("{id:guid}/download")]
