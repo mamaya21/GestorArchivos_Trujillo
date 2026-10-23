@@ -515,6 +515,114 @@ public class SyncController : ControllerBase
         return NoContent();
     }
 
+    // Restaurar una selección raíz completa desde el agente autorizado.
+    // No restaurar por nombre ambiguo ni mezclar árboles de distintos lotes.
+    [HttpPost("restore-selection")]
+    public async Task<IActionResult> RestoreSelection(
+        RestoreSyncSelectionRequest request, CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (string.IsNullOrWhiteSpace(request.LocalPath) ||
+            !Path.IsPathFullyQualified(request.LocalPath))
+            return BadRequest(new { message = "Ruta local inválida." });
+        var localPath = Path.GetFullPath(request.LocalPath);
+        var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(localPath));
+        if (string.IsNullOrWhiteSpace(name))
+            return BadRequest(new { message = "La ruta no identifica una carpeta." });
+        if (!await _permissionService.HasPermissionAsync(
+            userId, device.RootFolderId, PermisoCarpeta.Crear, cancellationToken))
+            return Forbid();
+
+        await using var tx = await _dbContext.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, cancellationToken);
+        var existing = await _dbContext.ElementosSync.FirstOrDefaultAsync(
+            x => x.DispositivoId == deviceId && x.RutaLocal == localPath,
+            cancellationToken);
+        if (existing is not null && existing.Tipo != TipoElementoSync.Carpeta)
+            return Conflict(new { message = "La ruta tiene una asociación incompatible." });
+
+        var active = await _dbContext.Carpetas.AnyAsync(
+            x => x.CarpetaPadreId == device.RootFolderId &&
+                 x.Nombre == name && !x.EnPapelera, cancellationToken);
+        if (active)
+            return Conflict(new { message = "Ya existe una carpeta activa con ese nombre. No se sobrescribirá." });
+
+        var candidates = await _dbContext.Carpetas
+            .Where(x => x.CarpetaPadreId == device.RootFolderId &&
+                        x.Nombre == name && x.EnPapelera)
+            .ToListAsync(cancellationToken);
+        if (candidates.Count != 1)
+            return Conflict(new { message = "No existe una única carpeta eliminada que pueda restaurarse." });
+
+        var root = candidates[0];
+        if (!root.EliminacionLoteId.HasValue)
+            return Conflict(new { message = "Esta eliminación antigua no tiene un lote verificable." });
+        if (!await _permissionService.HasPermissionIncludingTrashAsync(
+            userId, root.Id, PermisoCarpeta.Modificar, cancellationToken))
+            return Forbid();
+
+        var batch = root.EliminacionLoteId.Value;
+        var folders = await _dbContext.Carpetas
+            .Where(x => x.EnPapelera && x.EliminacionLoteId == batch)
+            .ToListAsync(cancellationToken);
+        var ids = folders.Select(x => x.Id).ToHashSet();
+        if (folders.Count == 0 || folders.Count(x => x.Id == root.Id) != 1 ||
+            folders.Any(x => x.Id != root.Id &&
+                (!x.CarpetaPadreId.HasValue || !ids.Contains(x.CarpetaPadreId.Value))))
+            return Conflict(new { message = "La estructura del lote no es válida." });
+
+        var files = await _dbContext.Archivos
+            .Where(x => x.Estado == EstadoArchivo.EnPapelera &&
+                        x.EliminacionLoteId == batch)
+            .ToListAsync(cancellationToken);
+        if (files.Any(x => !ids.Contains(x.CarpetaId)))
+            return Conflict(new { message = "El lote contiene archivos fuera de la carpeta." });
+
+        if (existing is not null && existing.Activo &&
+            existing.CarpetaRemotaId != root.Id)
+            return Conflict(new { message = "La ruta ya está asociada a otra carpeta activa." });
+
+        if (existing is null)
+        {
+            existing = new ElementoSync
+            {
+                DispositivoId = deviceId,
+                RutaLocal = localPath,
+                Tipo = TipoElementoSync.Carpeta,
+                CarpetaRemotaId = root.Id,
+                Activo = true
+            };
+            _dbContext.ElementosSync.Add(existing);
+        }
+        else
+        {
+            existing.CarpetaRemotaId = root.Id;
+            existing.Activo = true;
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var folder in folders)
+        {
+            folder.EnPapelera = false;
+            folder.FechaEliminacion = null;
+            folder.EliminacionLoteId = null;
+            folder.FechaModificacion = now;
+        }
+        foreach (var file in files)
+        {
+            file.Estado = EstadoArchivo.Activo;
+            file.FechaEliminacion = null;
+            file.EliminacionLoteId = null;
+            file.FechaModificacion = now;
+        }
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await tx.CommitAsync(cancellationToken);
+        return Ok(new { remoteFolderId = root.Id, syncItemId = existing.Id });
+    }
+
     [HttpDelete("items/{syncItemId:guid}")]
     public async Task<IActionResult> RemoveItem(
         Guid syncItemId,
@@ -756,3 +864,4 @@ public sealed record RegisterSyncItemRequest(
 
 public sealed record UpdateSyncItemPathRequest(
     string LocalPath);
+public sealed record RestoreSyncSelectionRequest(string LocalPath);
