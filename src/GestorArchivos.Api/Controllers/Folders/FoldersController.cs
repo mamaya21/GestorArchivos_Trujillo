@@ -480,8 +480,9 @@ public class FoldersController : ControllerBase
         if (folder is null)
             return NotFound();
 
-        if (!folder.CarpetaPadreId.HasValue)
-            return BadRequest(new { message = "No se puede enviar a papelera una carpeta raíz protegida." });
+        if (!folder.CarpetaPadreId.HasValue && await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.CarpetaRaizId == id, cancellationToken))
+            return BadRequest(new { message = "No se puede enviar a papelera la carpeta del dispositivo." });
 
         if (await IsSelectorManagedRootAsync(id, cancellationToken))
             return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
