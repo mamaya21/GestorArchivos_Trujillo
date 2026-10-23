@@ -62,18 +62,17 @@ public sealed class SelectiveSyncService
         await ProcessRemovalRequestsAsync(selections, cancellationToken);
 
 
-        var fingerprint = ComputeSelectionFingerprint(selections);
         var previousFingerprint = File.Exists(SelectionGuardPath)
             ? await File.ReadAllTextAsync(SelectionGuardPath, cancellationToken)
             : null;
         _suppressDestructiveOperations = !string.Equals(
-            previousFingerprint, fingerprint, StringComparison.Ordinal);
+            previousFingerprint, ComputeSelectionFingerprint(selections), StringComparison.Ordinal);
 
         // Una selección vacía es válida: el equipo permanece vinculado,
         // pero no se realizan transferencias ni se activa el modo tradicional.
         if (selections.Count == 0)
         {
-            await SaveSelectionFingerprintAsync(fingerprint, cancellationToken);
+            await SaveSelectionFingerprintAsync(ComputeSelectionFingerprint(selections), cancellationToken);
             return;
         }
 
@@ -86,6 +85,8 @@ public sealed class SelectiveSyncService
         await ReconcileSelectedRootRenamesAsync(selections, snapshot, cancellationToken);
         await ReconcileMissingSelectedRootsAsync(selections, cancellationToken);
         await ProcessRemovalRequestsAsync(selections, cancellationToken);
+        _suppressDestructiveOperations = !string.Equals(
+            previousFingerprint, ComputeSelectionFingerprint(selections), StringComparison.Ordinal);
 
         foreach (var selection in selections)
         {
