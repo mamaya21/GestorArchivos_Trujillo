@@ -1341,6 +1341,33 @@ public sealed class SelectiveSyncService
         foreach (var file in remoteFiles)
             ValidateRemoteName(file.Nombre);
 
+        // A web trash action must propagate to Windows before the normal
+        // local-to-remote scan can interpret the surviving folder as new.
+        // Never infer deletion merely because a remote folder is absent
+        // from the active snapshot: it may have been moved or renamed.
+        foreach (var mapped in items.Where(x =>
+            x.Tipo == SyncItemType.Folder &&
+            x.CarpetaRemotaId.HasValue &&
+            PathsEqual(Path.GetDirectoryName(x.RutaLocal)!, localFolderPath) &&
+            !remoteFolders.Any(remote => remote.Id == x.CarpetaRemotaId)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await _api.IsItemTrashedAsync(mapped.SyncItemId, cancellationToken))
+                continue;
+
+            if (Directory.Exists(mapped.RutaLocal))
+            {
+                ValidatePathWithoutLinks(mapped.RutaLocal);
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                    mapped.RutaLocal,
+                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            }
+
+            await _api.DetachTrashedItemAsync(mapped.SyncItemId, cancellationToken);
+            Console.WriteLine($"[SyncFolder] Carpeta enviada a papelera local: {mapped.RutaLocal}");
+        }
+
         var localFolders = Directory
             .EnumerateDirectories(localFolderPath)
             .ToDictionary(
