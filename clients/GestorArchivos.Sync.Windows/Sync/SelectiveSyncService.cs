@@ -468,9 +468,27 @@ public sealed class SelectiveSyncService
             if (remote.CarpetaId != plan.FolderId)
                 await _api.MoveRemoteFileAsync(remote.Id, plan.FolderId,
                     cancellationToken);
+
+            // Refrescar después del movimiento: el servidor puede modificar
+            // versión y metadatos, y la operación pudo quedar a medio hacer.
+            remote = (await _api.GetSnapshotAsync(cancellationToken))
+                .Files.SingleOrDefault(x => x.Id == plan.Item.ArchivoRemotoId);
+            if (remote is null || remote.CarpetaId != plan.FolderId ||
+                !HashesEqual(remote.HashSha256, plan.Baseline.RemoteHash))
+                throw new InvalidOperationException(
+                    $"No se verificó el destino remoto de '{plan.Destination}'.");
+
             if (!NamesEqual(remote.Nombre, plan.NewName))
                 await _api.RenameRemoteFileAsync(remote.Id, plan.NewName,
                     cancellationToken);
+
+            remote = (await _api.GetSnapshotAsync(cancellationToken))
+                .Files.SingleOrDefault(x => x.Id == plan.Item.ArchivoRemotoId);
+            if (remote is null || remote.CarpetaId != plan.FolderId ||
+                !NamesEqual(remote.Nombre, plan.NewName) ||
+                !HashesEqual(remote.HashSha256, plan.Baseline.RemoteHash))
+                throw new InvalidOperationException(
+                    $"No se verificó el renombrado remoto de '{plan.Destination}'.");
 
             await _api.UpdateItemPathAsync(plan.Item.SyncItemId,
                 plan.Destination, cancellationToken);
