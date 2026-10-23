@@ -633,23 +633,59 @@ export default function FilesPage() {
     if (!confirmation.isConfirmed) return
     setMoving(true)
     let completed = 0
+    let skipped = 0
+    setMoving(true)
     try {
-      for (const id of clipboard.folderIds) {
-        await apiRequest(`/folders/${id}/move`, {
+      // La lista visible corresponde al destino actual. No se altera el origen
+      // hasta que el usuario elige cómo resolver cada conflicto.
+      const existingNames = new Set(
+        [...folders, ...files].map(item => item.nombre.normalize('NFC').toLocaleLowerCase('es')),
+      )
+      const pending = [
+        ...clipboard.folderIds.map(id => ({ id, kind: 'folders' as const })),
+        ...clipboard.fileIds.map(id => ({ id, kind: 'files' as const })),
+      ]
+      let applyToAll: 'skip' | 'keepBoth' | null = null
+
+      for (const item of pending) {
+        const source = await apiRequest<{ nombre: string }>(`/${item.kind}/${item.id}`)
+        let resolution: 'skip' | 'keepBoth' | undefined
+        const normalized = source.nombre.normalize('NFC').toLocaleLowerCase('es')
+        if (existingNames.has(normalized)) {
+          if (applyToAll) {
+            resolution = applyToAll
+          } else {
+            const choice = await Swal.fire({
+              icon: 'warning',
+              title: 'Nombre duplicado',
+              text: `Ya existe "${source.nombre}" en el destino. ¿Qué deseas hacer?`,
+              showCancelButton: true,
+              showDenyButton: true,
+              confirmButtonText: 'Conservar ambos',
+              denyButtonText: 'Omitir',
+              cancelButtonText: 'Cancelar operación',
+              input: 'checkbox',
+              inputValue: '0',
+              inputPlaceholder: 'Aplicar a todos los conflictos',
+            })
+            if (choice.isDismissed) break
+            resolution = choice.isConfirmed ? 'keepBoth' : 'skip'
+            if (choice.value === 1 || choice.value === '1') applyToAll = resolution
+          }
+        }
+        const result = await apiRequest<{ skipped?: boolean } | undefined>(`/${item.kind}/${item.id}/move`, {
           method: 'PUT',
-          body: JSON.stringify({ destinationFolderId }),
+          body: JSON.stringify({ destinationFolderId, conflictResolution: resolution }),
         })
-        completed++
-      }
-      for (const id of clipboard.fileIds) {
-        await apiRequest(`/files/${id}/move`, {
-          method: 'PUT',
-          body: JSON.stringify({ destinationFolderId }),
-        })
-        completed++
+        if (result?.skipped) {
+          skipped++
+        } else {
+          completed++
+          existingNames.add(normalized)
+        }
       }
       setMoveClipboard(null)
-      setMessage(`${completed} elemento(s) movido(s) correctamente.`)
+      setMessage(`${completed} movido(s), ${skipped} omitido(s).`)
     } catch (err) {
       setError(`${completed} movido(s). Operación interrumpida: ${getError(err)}`)
       setMoveClipboard(null)
