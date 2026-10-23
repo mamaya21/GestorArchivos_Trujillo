@@ -1636,7 +1636,7 @@ export default function FilesPage() {
           <>
             {visibleFolders.map((folder) => (
               <div
-                className="explorer-row explorer-row-select"
+                className={`explorer-row explorer-row-select${moveClipboard?.sourceFolderId === currentFolderId && moveClipboard.folderIds.includes(folder.id) ? " explorer-row-cut" : ""}`}
                 key={folder.id}
                 onContextMenu={(event) => showContextMenu(event, 'folder', undefined, folder)}
                 {...touchMenu('folder', undefined, folder)}
@@ -1689,7 +1689,7 @@ export default function FilesPage() {
 
             {visibleFiles.map((file) => (
               <div
-                className="explorer-row explorer-row-select"
+                className={`explorer-row explorer-row-select${moveClipboard?.sourceFolderId === currentFolderId && moveClipboard.fileIds.includes(file.id) ? " explorer-row-cut" : ""}`}
                 key={file.id}
                 onContextMenu={(event) => showContextMenu(event, 'file', file)}
                 {...touchMenu('file', file)}
