@@ -53,6 +53,16 @@ public class ApplicationDbContext
     {
         base.OnModelCreating(builder);
 
+        builder.Entity<ArchivoVersion>(entity =>
+        {
+            entity.ToTable("ArchivoVersiones");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.NombreFisico).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.HashSha256).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.TipoContenido).HasMaxLength(255).IsRequired();
+            entity.HasIndex(x => new { x.ArchivoId, x.Numero }).IsUnique();
+        });
+
         builder.ApplyConfigurationsFromAssembly(
             typeof(ApplicationDbContext).Assembly);
     }
