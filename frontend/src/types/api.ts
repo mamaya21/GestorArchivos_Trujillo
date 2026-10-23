@@ -17,6 +17,7 @@ export interface Folder {
 }
 
 export interface FileItem {
+  selectorManaged?: boolean
   id: string
   nombre: string
   extension: string
