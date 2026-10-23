@@ -21,22 +21,21 @@ try {
     Push-Location (Join-Path $root 'frontend')
     try {
         Write-Host 'Checking frontend...'
-        # Reuse installed dependencies during local checks. npm ci deletes and
-        # reinstalls node_modules, which fails on Windows when the dev server
-        # has loaded native modules (for example Rolldown).
-        $requiredTools = @('node_modules/.bin/vite.cmd', 'node_modules/.bin/tsc.cmd', 'node_modules/.bin/oxlint.cmd')
-        $missingTools = @($requiredTools | Where-Object { -not (Test-Path $_) })
-        if ($missingTools.Count -gt 0) {
-            Write-Host 'Frontend dependencies missing; installing...'
-            npm ci
-            if ($LASTEXITCODE -ne 0) { throw 'npm ci failed. Close the frontend dev server before installing dependencies.' }
+        # Never run npm ci as part of a local validation: it removes node_modules
+        # and can fail when Vite/Rolldown native modules are loaded by the dev server.
+        # npm ci belongs to the isolated GitHub Actions runner.
+        $vite = Join-Path (Get-Location) 'node_modules/.bin/vite.cmd'
+        $tsc = Join-Path (Get-Location) 'node_modules/.bin/tsc.cmd'
+        $oxlint = Join-Path (Get-Location) 'node_modules/.bin/oxlint.cmd'
+        if (-not (Test-Path $vite) -or -not (Test-Path $tsc) -or -not (Test-Path $oxlint)) {
+            Write-Warning 'Frontend tools are missing or incomplete. Skipping frontend checks to avoid changing locked node_modules. Run npm ci only after stopping the frontend dev server.'
         } else {
-            Write-Host 'Using existing frontend dependencies (no npm ci while the dev server is running).'
-        }
+            Write-Host 'Using installed frontend tools.'
         npm run build
         if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
         npm run lint
         if ($LASTEXITCODE -ne 0) { throw 'Frontend lint failed.' }
+        }
     } finally { Pop-Location }
     if ($IntegrationTests) {
         if ($env:GESTOR_TEST_SQL_ISOLATED -ne '1') {
