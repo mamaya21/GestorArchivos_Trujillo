@@ -997,12 +997,12 @@ public sealed class SelectiveSyncService
                     Console.WriteLine($"[SyncGuard] Sin coincidencia para {item.RutaLocal}; " +
                         $"archivos en carpeta: {localSiblings}; hashBase={baseline.LocalHash}; " +
                         $"idRemoto={item.ArchivoRemotoId}");
-                    // Una desaparición no demostrada no es autorización
-                    // para enviar el objeto remoto a la papelera.
-                    throw new InvalidOperationException(
-                        $"No se pudo verificar si '{item.RutaLocal}' fue " +
-                        "eliminado o movido. Sincronización bloqueada " +
-                        "para proteger el archivo remoto.");
+                    // A missing local file with no matching move candidate
+                    // must not stall synchronization of unrelated files.
+                    // Remote deletion is never authorized by this branch.
+                    Console.WriteLine($"[SyncGuard] Se conserva el archivo remoto " +
+                        $"{item.ArchivoRemotoId}; continúa la sincronización.");
+                    continue;
                 }
                 if (matches.Count != 1)
                     throw new InvalidOperationException(
