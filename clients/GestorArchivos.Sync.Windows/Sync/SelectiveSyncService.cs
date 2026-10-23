@@ -989,6 +989,14 @@ public sealed class SelectiveSyncService
 
                 if (matches.Count == 0)
                 {
+                    var localDirectory = Path.GetDirectoryName(item.RutaLocal);
+                    var localSiblings = localDirectory is not null && Directory.Exists(localDirectory)
+                        ? string.Join(", ", Directory.EnumerateFiles(localDirectory)
+                            .Select(Path.GetFileName).Take(20))
+                        : "(carpeta local ausente)";
+                    Console.WriteLine($"[SyncGuard] Sin coincidencia para {item.RutaLocal}; " +
+                        $"archivos en carpeta: {localSiblings}; hashBase={baseline.LocalHash}; " +
+                        $"idRemoto={item.ArchivoRemotoId}");
                     // Una desaparición no demostrada no es autorización
                     // para enviar el objeto remoto a la papelera.
                     throw new InvalidOperationException(
