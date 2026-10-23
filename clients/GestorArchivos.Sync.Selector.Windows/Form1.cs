@@ -8,6 +8,8 @@ public partial class Form1 : Form
     private readonly List<SyncSelection> _selections = new();
     private readonly ListBox _list = new();
     private readonly Label _status = new();
+    private readonly List<RemovalRequest> _removals = new();
+    private static readonly string RemovalPath = Path.Combine(Path.GetDirectoryName(SharedConfigPath)!, "removal-requests.json");
 
     private static readonly string ConfigPath = Path.Combine(
         Environment.GetFolderPath(
@@ -267,6 +269,17 @@ public partial class Form1 : Form
         if (index < 0 || index >= _selections.Count)
             return;
 
+        var selected = _selections[index];
+        var choice = MessageBox.Show(this,
+            "¿Qué deseas hacer con el contenido de esta selección?\n\n" +
+            "Sí: conservar en este dispositivo y enviar el contenido de la web a la papelera.\n" +
+            "No: conservar el contenido en este dispositivo y en la web.\n" +
+            "Cancelar: mantener la sincronización.",
+            "Quitar sincronización", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2);
+        if (choice == DialogResult.Cancel) return;
+        if (choice == DialogResult.Yes)
+            _removals.Add(new RemovalRequest { Path = selected.Path, Kind = (int)selected.Kind });
         _selections.RemoveAt(index);
         RefreshList();
     }
@@ -338,6 +351,18 @@ public partial class Form1 : Form
             // Guardar primero la configuración compartida.
             // Si falla, no informar que el servicio
             // ya recibió la nueva selección.
+            // La solicitud se conserva hasta que el servicio confirme su ejecución.
+            // No borrar solicitudes anteriores pendientes.
+            if (_removals.Count > 0)
+            {
+                var pending = File.Exists(RemovalPath)
+                    ? JsonSerializer.Deserialize<List<RemovalRequest>>(File.ReadAllText(RemovalPath)) ?? new()
+                    : new List<RemovalRequest>();
+                foreach (var removal in _removals)
+                    if (!pending.Any(x => string.Equals(x.Path, removal.Path, StringComparison.OrdinalIgnoreCase)))
+                        pending.Add(removal);
+                WriteAtomically(RemovalPath, JsonSerializer.Serialize(pending));
+            }
             WriteAtomically(SharedConfigPath, json);
 
             // Conservar también la configuración
@@ -351,6 +376,7 @@ public partial class Form1 : Form
             if (File.Exists(pendingPath))
                 File.Delete(pendingPath);
 
+            _removals.Clear();
             MessageBox.Show(
                 "Selecciones guardadas correctamente.",
                 "Gestor de Archivos",
@@ -488,6 +514,12 @@ public partial class Form1 : Form
         return normalizedPath.StartsWith(
             normalizedFolder + Path.DirectorySeparatorChar,
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class RemovalRequest
+    {
+        public string Path { get; set; } = string.Empty;
+        public int Kind { get; set; }
     }
 
     private enum SelectionKind
