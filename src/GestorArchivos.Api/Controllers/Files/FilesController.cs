@@ -444,6 +444,79 @@ public class FilesController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/versions")]
+    public async Task<IActionResult> ListVersions(Guid id, CancellationToken cancellationToken)
+    {
+        var file = await _dbContext.Archivos.AsNoTracking().FirstOrDefaultAsync(
+            x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
+        if (file is null) return NotFound();
+        if (!await _permissionService.HasPermissionAsync(CurrentUserId(), file.CarpetaId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+        var history = await _dbContext.ArchivoVersiones.AsNoTracking()
+            .Where(x => x.ArchivoId == id).OrderByDescending(x => x.Numero)
+            .Select(x => new { x.Id, x.Numero, x.TamanoBytes, x.FechaUtc })
+            .ToListAsync(cancellationToken);
+        return Ok(new { current = file.Version, history });
+    }
+
+    [HttpGet("{id:guid}/versions/{versionId:guid}/download")]
+    public async Task<IActionResult> DownloadVersion(Guid id, Guid versionId, CancellationToken cancellationToken)
+    {
+        var file = await _dbContext.Archivos.AsNoTracking().FirstOrDefaultAsync(
+            x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
+        if (file is null) return NotFound();
+        if (!await _permissionService.HasPermissionAsync(CurrentUserId(), file.CarpetaId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+        var version = await _dbContext.ArchivoVersiones.AsNoTracking().FirstOrDefaultAsync(
+            x => x.Id == versionId && x.ArchivoId == id, cancellationToken);
+        if (version is null) return NotFound();
+        var stream = await _fileStorage.OpenReadAsync(version.NombreFisico, cancellationToken);
+        return File(stream, version.TipoContenido, file.Nombre);
+    }
+
+    [HttpPost("{id:guid}/versions/{versionId:guid}/restore")]
+    public async Task<IActionResult> RestoreVersion(Guid id, Guid versionId, CancellationToken cancellationToken)
+    {
+        var file = await _dbContext.Archivos.FirstOrDefaultAsync(
+            x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
+        if (file is null) return NotFound();
+        if (!await _permissionService.HasPermissionAsync(CurrentUserId(), file.CarpetaId, PermisoCarpeta.Modificar, cancellationToken))
+            return Forbid();
+        var previous = await _dbContext.ArchivoVersiones.AsNoTracking().FirstOrDefaultAsync(
+            x => x.Id == versionId && x.ArchivoId == id, cancellationToken);
+        if (previous is null) return NotFound();
+        var newPath = Path.Combine(DateTime.UtcNow.ToString("yyyy"), DateTime.UtcNow.ToString("MM"),
+            $"{Guid.NewGuid():N}{Path.GetExtension(file.Nombre)}");
+        await using (var input = await _fileStorage.OpenReadAsync(previous.NombreFisico, cancellationToken))
+            await _fileStorage.SaveAsync(newPath, input, cancellationToken);
+        try
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+            _dbContext.ArchivoVersiones.Add(new ArchivoVersion
+            {
+                ArchivoId = file.Id, Numero = file.Version, NombreFisico = file.NombreFisico,
+                HashSha256 = file.HashSha256, TamanoBytes = file.TamanoBytes,
+                TipoContenido = file.TipoContenido, UsuarioId = CurrentUserId()
+            });
+            file.NombreFisico = newPath;
+            file.HashSha256 = previous.HashSha256;
+            file.TamanoBytes = previous.TamanoBytes;
+            file.TipoContenido = previous.TipoContenido;
+            file.Version++;
+            file.FechaModificacion = DateTime.UtcNow;
+            await _syncChangeService.RegisterAsync(file.CarpetaId, file.Id, null, "FILE_UPDATED",
+                file.Version, cancellationToken: cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Ok(new { file.Id, file.Version });
+        }
+        catch
+        {
+            await _fileStorage.DeleteAsync(newPath, CancellationToken.None);
+            throw;
+        }
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(
         Guid id,
