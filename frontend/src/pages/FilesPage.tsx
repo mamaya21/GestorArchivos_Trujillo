@@ -652,48 +652,6 @@ export default function FilesPage() {
     }
   }
 
-  async function deleteSelected() {
-    if (!selectedCount) return
-
-    const confirmation = await Swal.fire({
-      icon: 'warning',
-      title: 'Mover elementos a papelera',
-      text: `¿Deseas mover ${selectedCount} elemento(s) a la papelera?`,
-      showCancelButton: true,
-      confirmButtonText: 'Mover',
-      cancelButtonText: 'Cancelar',
-    })
-
-    if (!confirmation.isConfirmed) return
-
-    setLoading(true)
-
-    try {
-      for (const id of selectedFiles) {
-        await apiRequest(`/files/${id}`, {
-          method: 'DELETE',
-        })
-      }
-
-      for (const id of selectedFolders) {
-        await apiRequest(`/folders/${id}`, {
-          method: 'DELETE',
-        })
-      }
-
-      setMessage(
-        `${selectedCount} elemento(s) movido(s) a la papelera.`,
-      )
-
-      await loadContents(currentFolderId)
-    } catch (err) {
-      setError(getError(err))
-      await loadContents(currentFolderId)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   function openFile(file: FileItem) {
     window.open(
       `/api/files/${file.id}/open`,
