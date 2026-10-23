@@ -1767,7 +1767,35 @@ export default function FilesPage() {
       onDrop={handleDrop}
       onDragEnd={() => setDraggedItem(null)}
     >
-      <div className="file-page-heading"><h1>Archivos</h1></div>
+      <div className="file-page-heading">
+        <h1>Archivos</h1>
+          <details className="file-sync-dropdown" onToggle={(event) => {
+              if (event.currentTarget.open) void refreshSyncLinkStatus()
+            }}>
+            <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
+            <div className="file-sync-dropdown-menu">
+              {syncLinkedHere && <button
+                type="button"
+                onClick={(event) => {
+                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+                    .then(response => {
+                      if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
+                    })
+                    .catch(() => void Swal.fire({
+                      icon: 'error',
+                      title: 'Selector de sincronización no disponible',
+                      text: 'Abre la aplicación de sincronización de Gestor de Archivos en este equipo e inténtalo nuevamente.',
+                    }))
+                }}
+              >Seleccionar sincronización</button>}
+              <button type="button" onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open')
+                void openSyncManagement()
+              }}>Administrar sincronización</button>
+            </div>
+          </details>
+      </div>
       <div className="file-hidden-inputs">
           <input
             ref={fileInput}
@@ -1974,32 +2002,7 @@ export default function FilesPage() {
           }
         />
           </div>
-          <details className="file-sync-dropdown" onToggle={(event) => {
-              if (event.currentTarget.open) void refreshSyncLinkStatus()
-            }}>
-            <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
-            <div className="file-sync-dropdown-menu">
-              {syncLinkedHere && <button
-                type="button"
-                onClick={(event) => {
-                  event.currentTarget.closest('details')?.removeAttribute('open')
-                  void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
-                    .then(response => {
-                      if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
-                    })
-                    .catch(() => void Swal.fire({
-                      icon: 'error',
-                      title: 'Selector de sincronización no disponible',
-                      text: 'Abre la aplicación de sincronización de Gestor de Archivos en este equipo e inténtalo nuevamente.',
-                    }))
-                }}
-              >Seleccionar sincronización</button>}
-              <button type="button" onClick={(event) => {
-                event.currentTarget.closest('details')?.removeAttribute('open')
-                void openSyncManagement()
-              }}>Administrar sincronización</button>
-            </div>
-          </details>
+
 
           </div>
         </div>
