@@ -1673,7 +1673,26 @@ export default function FilesPage() {
           }
         }
         await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
-        await Swal.fire({ icon: 'success', title: 'Dispositivo registrado' })
+        let selectorOpened = false
+        try {
+          const selectorResponse = await fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+          selectorOpened = selectorResponse.ok
+        } catch {
+          // El agente del selector puede no estar abierto en la sesión Windows.
+        }
+        if (!selectorOpened) {
+          await Swal.fire({
+            icon: 'warning',
+            title: 'Dispositivo registrado; falta elegir carpetas',
+            text: 'No se pudo abrir el selector de Windows. Inicia GestorArchivos.Sync.Selector.Windows en este equipo y abre el selector desde su icono en la bandeja. No se ha confirmado la selección de carpetas.',
+          })
+          return
+        }
+        await Swal.fire({
+          icon: 'success',
+          title: 'Dispositivo registrado',
+          text: 'Se abrió el selector de Windows. Revisa y guarda las carpetas y archivos que deseas sincronizar.',
+        })
         return
       }
 
