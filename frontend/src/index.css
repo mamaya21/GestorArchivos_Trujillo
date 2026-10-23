@@ -2073,3 +2073,30 @@ button:disabled {
   transition: opacity .15s ease;
 }
 .file-manager .explorer-row-cut .item-name { color: #64748b; }
+
+
+/* Conflict resolution: same visual language for copy, move and restore. */
+.ga-conflict-dialog .swal2-html-container {
+  margin: 1rem 1.5rem 0;
+  text-align: left;
+}
+.ga-conflict-options { display: flex; flex-direction: column; gap: 10px; margin: 0 0 18px; }
+.ga-conflict-option {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 15px; border: 1px solid #dbe3ef; border-radius: 10px;
+  background: #fff; cursor: pointer; line-height: 1.35;
+}
+.ga-conflict-option:hover { border-color: #2563eb; background: #f7faff; }
+.ga-conflict-option:has(input:checked) { border-color: #2563eb; background: #eff6ff; }
+.ga-conflict-option input { flex: 0 0 auto; width: 17px; height: 17px; accent-color: #2563eb; }
+.ga-conflict-option span { display: flex; flex-direction: column; gap: 3px; }
+.ga-conflict-option strong { font-size: 14px; color: #1e293b; font-weight: 600; }
+.ga-conflict-option small { font-size: 12px; color: #64748b; }
+.ga-conflict-apply {
+  display: flex; align-items: center; gap: 9px;
+  padding: 12px 2px 0; border-top: 1px solid #e2e8f0;
+  font-size: 13px; color: #334155; cursor: pointer;
+}
+.ga-conflict-apply input { accent-color: #2563eb; }
+.ga-conflict-dialog .swal2-actions { gap: 8px; margin-top: 20px; }
+.ga-conflict-dialog .swal2-confirm, .ga-conflict-dialog .swal2-cancel { border-radius: 7px; }
