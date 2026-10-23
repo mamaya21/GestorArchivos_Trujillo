@@ -402,7 +402,7 @@ export default function FilesPage() {
         const name = value.trim()
         if (!name) return 'Ingresa un nombre.'
         if (!name.toLowerCase().endsWith('.txt')) return 'El archivo debe tener extensión .txt.'
-        if (name === '.' || name === '..' || /[\\\\/:*?"<>|\\x00-\\x1F]/.test(name) || name.endsWith('.') || name.endsWith(' ')) return 'Nombre de archivo no válido.'
+        if (name === '.' || name === '..' || /[<>:"/\\|?*]/.test(name) || [...name].some(char => char.charCodeAt(0) < 32) || name.endsWith('.') || name.endsWith(' ')) return 'Nombre de archivo no válido.'
         return undefined
       },
     })
