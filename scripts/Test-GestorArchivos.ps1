@@ -8,7 +8,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location $root
 try {
     Write-Host 'Building .NET solution...'
-    dotnet build .\GestorArchivos.sln -c Release
+    dotnet build .\GestorArchivos.sln -c Release -p:UseAppHost=false
     if ($LASTEXITCODE -ne 0) { throw 'Build .NET failed.' }
     Push-Location (Join-Path $root 'frontend')
     try {
