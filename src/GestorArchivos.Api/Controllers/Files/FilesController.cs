@@ -39,6 +39,70 @@ public class FilesController : ControllerBase
         _syncChangeService = syncChangeService;
     }
 
+    public sealed record CreateEmptyFileRequest(Guid FolderId, string Name);
+
+    [HttpPost("empty")]
+    public async Task<IActionResult> CreateEmpty(
+        [FromBody] CreateEmptyFileRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!FileNameValidator.TryValidate(request.Name, out var name, out var error))
+            return BadRequest(new { message = error });
+
+        if (!string.Equals(Path.GetExtension(name), ".txt", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { message = "Solo se permite crear archivos .txt." });
+
+        if (!await _dbContext.Carpetas.AsNoTracking().AnyAsync(
+                x => x.Id == request.FolderId && !x.EnPapelera, cancellationToken))
+            return BadRequest(new { message = "La carpeta no existe." });
+
+        if (!await _permissionService.HasPermissionAsync(
+                CurrentUserId(), request.FolderId, PermisoCarpeta.Crear, cancellationToken))
+            return Forbid();
+
+        if (await _dbContext.Archivos.AsNoTracking().AnyAsync(
+                x => x.CarpetaId == request.FolderId && x.Nombre == name &&
+                     x.Estado == EstadoArchivo.Activo, cancellationToken))
+            return Conflict(new { message = "Ya existe un archivo con ese nombre." });
+
+        var id = Guid.NewGuid();
+        var relativePath = Path.Combine(DateTime.UtcNow.ToString("yyyy"),
+            DateTime.UtcNow.ToString("MM"), $"{id:N}.txt");
+
+        await using (var empty = new MemoryStream())
+            await _fileStorage.SaveAsync(relativePath, empty, cancellationToken);
+
+        var entity = new Archivo
+        {
+            Id = id,
+            Nombre = name,
+            NombreFisico = relativePath,
+            Extension = ".txt",
+            TipoContenido = "text/plain",
+            TamanoBytes = 0,
+            HashSha256 = Convert.ToHexString(SHA256.HashData(Array.Empty<byte>())),
+            Version = 1,
+            CarpetaId = request.FolderId,
+            CreadoPorUsuarioId = CurrentUserId()
+        };
+
+        try
+        {
+            _dbContext.Archivos.Add(entity);
+            await _syncChangeService.RegisterAsync(request.FolderId, entity.Id, null,
+                "FILE_CREATED", entity.Version, cancellationToken: cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            await _fileStorage.DeleteAsync(relativePath, CancellationToken.None);
+            throw;
+        }
+
+        return CreatedAtAction(nameof(GetById), new { id = entity.Id },
+            new { entity.Id, entity.Nombre, entity.TamanoBytes, entity.TipoContenido });
+    }
+
     [HttpPost("upload")]
     [RequestSizeLimit(MaxFileSize)]
     public async Task<IActionResult> Upload(
