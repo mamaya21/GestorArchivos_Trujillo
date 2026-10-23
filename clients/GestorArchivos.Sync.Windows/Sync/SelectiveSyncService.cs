@@ -168,7 +168,11 @@ public sealed class SelectiveSyncService
 
             var item = items.SingleOrDefault(x => PathsEqual(x.RutaLocal, oldPath) &&
                 (selection.Kind == 1 ? x.Tipo == SyncItemType.Folder : x.Tipo == SyncItemType.File));
-            if (item is null) continue;
+            if (item is null)
+            {
+                Console.WriteLine($"[SyncRename] Sin asociación para la raíz ausente: {oldPath}");
+                continue;
+            }
             var descendants = items.Where(x => PathsEqual(x.RutaLocal, oldPath) ||
                 (selection.Kind == 1 && IsDescendantPath(x.RutaLocal, oldPath))).ToList();
             var associatedFiles = descendants.Where(x => x.Tipo == SyncItemType.File &&
@@ -275,8 +279,15 @@ public sealed class SelectiveSyncService
                 }
             }
             if (verified.Count != 1)
+            {
+                Console.WriteLine($"[SyncRename] Sin coincidencia única para '{oldPath}': " +
+                    $"asociacionesArchivo={associatedFiles.Count}, candidatos={candidates.Count}, " +
+                    $"verificados={verified.Count}, carpetaRemota={item.CarpetaRemotaId}, " +
+                    $"archivoRemoto={item.ArchivoRemotoId}. Se conserva la selección.");
                 continue; // Ambiguous or deleted: stop safely, never create a new root.
+            }
             var destination = verified[0];
+            Console.WriteLine($"[SyncRename] Identidad verificada: '{oldPath}' => '{destination}'.");
             var name = Path.GetFileName(destination);
             ValidateRemoteName(name);
             if (snapshot.Folders.Any(x => x.CarpetaPadreId == snapshot.RootFolderId &&
