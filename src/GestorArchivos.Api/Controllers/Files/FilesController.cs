@@ -643,9 +643,39 @@ public class FilesController : ControllerBase
         var userId = CurrentUserId();
         if (!await _permissionService.HasPermissionAsync(userId, file.CarpetaId, PermisoCarpeta.Modificar, cancellationToken) ||
             !await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Crear, cancellationToken)) return Forbid();
-        if (await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == destination.Id && x.Nombre == file.Nombre && x.Estado == EstadoArchivo.Activo, cancellationToken) ||
-            await _dbContext.Carpetas.AnyAsync(x => x.CarpetaPadreId == destination.Id && x.Nombre == file.Nombre && !x.EnPapelera, cancellationToken))
-            return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+        // Conservar ambos genera un nombre disponible sin alterar el elemento existente.
+        // Omitir deja el origen intacto y permite continuar una selección múltiple.
+        async Task<bool> ExistsAsync(string name) =>
+            await _dbContext.Carpetas.AnyAsync(x => x.Id != id && x.CarpetaPadreId == destination.Id && x.Nombre == name && !x.EnPapelera, cancellationToken) ||
+            await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == destination.Id && x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
+
+        var finalName = file.Nombre;
+        if (await ExistsAsync(finalName))
+        {
+            if (request.ConflictResolution == "skip")
+                return Ok(new { skipped = true });
+
+            if (request.ConflictResolution != "keepBoth")
+                return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+
+            var extension = Path.GetExtension(finalName);
+            var stem = finalName[..^extension.Length];
+            var found = false;
+            for (var suffix = 1; suffix <= 10000; suffix++)
+            {
+                var candidate = $"{stem} ({suffix}){extension}";
+                if (!FileNameValidator.TryValidate(candidate, out _, out _))
+                    return Conflict(new { message = "No se pudo generar un nombre válido." });
+                if (await ExistsAsync(candidate)) continue;
+                finalName = candidate;
+                found = true;
+                break;
+            }
+            if (!found)
+                return Conflict(new { message = "No hay un nombre disponible en el destino." });
+        }
+        file.Nombre = finalName;
+        file.Extension = Path.GetExtension(finalName);
         var oldParentId = file.CarpetaId;
         file.CarpetaId = destination.Id;
         file.FechaModificacion = DateTime.UtcNow;
@@ -731,4 +761,4 @@ public class FilesController : ControllerBase
 }
 
 public sealed record RenameFileRequest(string Name);
-public sealed record MoveFileRequest(Guid DestinationFolderId);
+public sealed record MoveFileRequest(Guid DestinationFolderId, string? ConflictResolution = null);
