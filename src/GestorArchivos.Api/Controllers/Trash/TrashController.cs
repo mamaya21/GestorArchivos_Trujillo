@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using GestorArchivos.Application.Common.Validation;
+using GestorArchivos.Domain.Entities;
 using GestorArchivos.Application.Common.Security;
 using GestorArchivos.Domain.Enums;
 using GestorArchivos.Domain.Security;
@@ -451,6 +452,32 @@ public sealed class TrashController : ControllerBase
                         EstadoArchivo.Activo,
                     cancellationToken);
 
+        if (duplicate && conflictResolution == "replace")
+        {
+            if (!await _permissionService.HasPermissionIncludingTrashAsync(
+                CurrentUserId(), file.CarpetaId, PermisoCarpeta.Modificar, cancellationToken))
+                return Forbid();
+            var target = await _dbContext.Archivos.FirstAsync(
+                x => x.Id != id && x.CarpetaId == file.CarpetaId &&
+                     x.Nombre == file.Nombre && x.Estado == EstadoArchivo.Activo, cancellationToken);
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+            _dbContext.ArchivoVersiones.Add(new ArchivoVersion
+            {
+                ArchivoId = target.Id, Numero = target.Version, NombreFisico = target.NombreFisico,
+                HashSha256 = target.HashSha256, TamanoBytes = target.TamanoBytes,
+                TipoContenido = target.TipoContenido, UsuarioId = CurrentUserId()
+            });
+            target.NombreFisico = file.NombreFisico;
+            target.HashSha256 = file.HashSha256;
+            target.TamanoBytes = file.TamanoBytes;
+            target.TipoContenido = file.TipoContenido;
+            target.Version++;
+            target.FechaModificacion = DateTime.UtcNow;
+            _dbContext.Archivos.Remove(file);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Ok(new { replaced = true });
+        }
         if (duplicate && conflictResolution == "skip") return Ok(new { skipped = true });
         if (duplicate && conflictResolution == "keepBoth")
         {
