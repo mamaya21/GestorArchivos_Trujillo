@@ -123,18 +123,43 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                     if (!await IsCurrentRegistrationAsync(cancellationToken))
                         break;
 
-                    // Una activación desde cero requiere confirmar selecciones nuevas.
-                    if (File.Exists(Path.Combine(
+                    // El selector puede ejecutarse con una versión anterior o sin
+                    // permiso para borrar la marca. Solo se libera el bloqueo cuando
+                    // existe una selección válida, no vacía y posterior a la activación.
+                    var pendingPath = Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                        "GestorArchivos", "Sync", "selection-pending.flag")))
+                        "GestorArchivos", "Sync", "selection-pending.flag");
+                    if (File.Exists(pendingPath))
                     {
-                        if (_monitorStarted)
+                        var selectionConfirmed = false;
+                        try
                         {
-                            _localChangeMonitor.Stop();
-                            _monitorStarted = false;
+                            if (File.Exists(SelectionsPath) &&
+                                File.GetLastWriteTimeUtc(SelectionsPath) > File.GetLastWriteTimeUtc(pendingPath))
+                            {
+                                using var selectionDoc = JsonDocument.Parse(
+                                    await File.ReadAllTextAsync(SelectionsPath, cancellationToken));
+                                selectionConfirmed = selectionDoc.RootElement.ValueKind == JsonValueKind.Array &&
+                                    selectionDoc.RootElement.GetArrayLength() > 0;
+                            }
                         }
-                        await DelayAsync(cancellationToken);
-                        continue;
+                        catch (IOException) { }
+                        catch (JsonException) { }
+                        catch (UnauthorizedAccessException) { }
+
+                        if (!selectionConfirmed)
+                        {
+                            if (_monitorStarted)
+                            {
+                                _localChangeMonitor.Stop();
+                                _monitorStarted = false;
+                            }
+                            await DelayAsync(cancellationToken);
+                            continue;
+                        }
+
+                        // No se requiere borrar la marca para reanudar: el selector
+                        // puede no tener permisos sobre ProgramData.
                     }
 
                     // Pausar nunca altera selecciones, asociaciones ni archivos.
