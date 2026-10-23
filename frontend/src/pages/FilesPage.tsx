@@ -133,6 +133,7 @@ export default function FilesPage() {
   const [pendingUpload, setPendingUpload] =
     useState<StoredUpload | null>(null)
 
+  const [syncLinkedHere, setSyncLinkedHere] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
@@ -1503,6 +1504,20 @@ export default function FilesPage() {
     }
   }
 
+  async function refreshSyncLinkStatus() {
+    try {
+      const [devices, response] = await Promise.all([
+        apiRequest<Array<{ deviceId: string; active: boolean }>>('/sync/devices'),
+        fetch('http://127.0.0.1:47831/control'),
+      ])
+      if (!response.ok) { setSyncLinkedHere(false); return }
+      const local = await response.json() as { deviceId?: string }
+      setSyncLinkedHere(Boolean(local.deviceId && devices.some(
+        device => device.active && device.deviceId === local.deviceId,
+      )))
+    } catch { setSyncLinkedHere(false) }
+  }
+
   async function openSyncManagement() {
     try {
       const devices = await apiRequest<Array<{
@@ -1529,6 +1544,7 @@ export default function FilesPage() {
       }
 
       const linkedHere = active.find(d => d.deviceId === localState?.deviceId)
+      setSyncLinkedHere(Boolean(linkedHere))
       const result = await Swal.fire({
         title: 'Sincronización',
         html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
@@ -1603,6 +1619,7 @@ export default function FilesPage() {
           method: 'POST',
         })
         if (!deactivateResponse.ok) throw new Error('Se revocó el dispositivo remoto, pero no se pudo limpiar el registro local')
+        setSyncLinkedHere(false)
         if (confirm.value === 'discard') {
           await apiRequest(`/sync/devices/${linkedHere.deviceId}/discard-root`, { method: 'POST' })
         }
@@ -1673,6 +1690,7 @@ export default function FilesPage() {
           }
         }
         await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
+        setSyncLinkedHere(true)
         let selectorOpened = false
         try {
           const selectorResponse = await fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
@@ -1790,10 +1808,12 @@ export default function FilesPage() {
               <span aria-hidden="true">↑</span> Subir archivos
             </button>
           </div>
-          <details className="file-sync-dropdown">
+          <details className="file-sync-dropdown" onToggle={(event) => {
+              if (event.currentTarget.open) void refreshSyncLinkStatus()
+            }}>
             <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
             <div className="file-sync-dropdown-menu">
-              <button
+              {syncLinkedHere && <button
                 type="button"
                 onClick={(event) => {
                   event.currentTarget.closest('details')?.removeAttribute('open')
@@ -1807,7 +1827,7 @@ export default function FilesPage() {
                       text: 'Abre una vez el selector de Gestor Archivos desde Windows para iniciar el agente local.',
                     }))
                 }}
-              >Seleccionar sincronización</button>
+              >Seleccionar sincronización</button>}
               <button type="button" onClick={(event) => {
                 event.currentTarget.closest('details')?.removeAttribute('open')
                 void openSyncManagement()
