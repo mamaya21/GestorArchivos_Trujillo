@@ -548,11 +548,24 @@ public class SyncController : ControllerBase
         if (existing is not null && existing.Tipo != TipoElementoSync.Carpeta)
             return Conflict(new { message = "La ruta tiene una asociación incompatible." });
 
-        var active = await _dbContext.Carpetas.AnyAsync(
+        var activeFolder = await _dbContext.Carpetas.FirstOrDefaultAsync(
             x => x.CarpetaPadreId == device.RootFolderId &&
                  x.Nombre == name && !x.EnPapelera, cancellationToken);
-        if (active)
-            return NoContent();
+        if (activeFolder is not null)
+        {
+            if (existing is not null && existing.Tipo == TipoElementoSync.Carpeta &&
+                existing.CarpetaRemotaId == activeFolder.Id)
+            {
+                if (!existing.Activo)
+                {
+                    existing.Activo = true;
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                    await tx.CommitAsync(cancellationToken);
+                }
+                return NoContent();
+            }
+            return Conflict(new { message = "La carpeta web ya existe sin una asociación verificable con esta ruta. No se combinará automáticamente con un origen desconocido." });
+        }
 
         var candidates = await _dbContext.Carpetas
             .Where(x => x.CarpetaPadreId == device.RootFolderId &&
