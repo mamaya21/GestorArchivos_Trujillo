@@ -42,18 +42,12 @@ public sealed class TrashController : ControllerBase
             storageOptions.Value.RootPath);
     }
 
-    private async Task<bool> IsSelectorManagedTrashRootAsync(
+    private Task<bool> IsSelectorManagedTrashRootAsync(
         Carpeta folder, CancellationToken cancellationToken)
     {
-        if (!folder.CarpetaPadreId.HasValue)
-            return false;
-
-        // Las raíces antiguas pueden perder su asociación histórica
-        // cuando se seleccionan nuevamente. Proteger por el contenedor
-        // raíz del dispositivo, no únicamente por ElementoSync activo.
-        return await _dbContext.DispositivosSync.AsNoTracking()
-            .AnyAsync(x => x.CarpetaRaizId == folder.CarpetaPadreId.Value,
-                cancellationToken);
+        return _dbContext.ElementosSync.AsNoTracking().AnyAsync(
+            x => x.Activo && x.Tipo == TipoElementoSync.Carpeta &&
+                 x.CarpetaRemotaId == folder.Id, cancellationToken);
     }
 
     [HttpGet]
@@ -84,10 +78,12 @@ public sealed class TrashController : ControllerBase
         var trashedFolderIds = folderCandidates
             .Select(x => x.Id)
             .ToHashSet();
-        var managedParentIds = await _dbContext.DispositivosSync.AsNoTracking()
-            .Select(x => x.CarpetaRaizId)
+        var managedRootIds = await _dbContext.ElementosSync.AsNoTracking()
+            .Where(x => x.Activo && x.Tipo == TipoElementoSync.Carpeta &&
+                        x.CarpetaRemotaId.HasValue)
+            .Select(x => x.CarpetaRemotaId!.Value)
             .ToListAsync(cancellationToken);
-        var managedRoots = managedParentIds.ToHashSet();
+        var managedRoots = managedRootIds.ToHashSet();
 
         var visibleFolders = new List<object>();
 
@@ -112,8 +108,7 @@ public sealed class TrashController : ControllerBase
                     folder.Nombre,
                     folder.CarpetaPadreId,
                     folder.FechaEliminacion,
-                    selectorManaged = folder.CarpetaPadreId.HasValue &&
-                        managedRoots.Contains(folder.CarpetaPadreId.Value)
+                    selectorManaged = managedRoots.Contains(folder.Id)
                 });
             }
         }
