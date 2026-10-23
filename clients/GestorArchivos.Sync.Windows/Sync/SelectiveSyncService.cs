@@ -145,64 +145,130 @@ public sealed class SelectiveSyncService
     {
         var items = await _api.GetItemsAsync(cancellationToken);
         var baselines = await _baselines.LoadAsync(cancellationToken);
-        var baselineById = baselines
-            .GroupBy(x => x.SyncItemId)
-            .ToDictionary(x => x.Key, x => x.First());
+        var snapshot = await _api.GetSnapshotAsync(cancellationToken);
+        var plans = new List<(SyncItem Item, string Destination, Guid FolderId,
+            string NewName, SyncBaselineItem Baseline)>();
 
         foreach (var selection in selections.Where(x => x.Kind == 1))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var root = Path.GetFullPath(selection.Path);
-            var rootPrefix = Path.TrimEndingDirectorySeparator(root) +
+            var prefix = Path.TrimEndingDirectorySeparator(root) +
                 Path.DirectorySeparatorChar;
-
-            // La carpeta raíz es una selección explícita: no se interpreta
-            // como una carpeta movida por el detector.
             var mapped = items.Where(x =>
-                x.RutaLocal.StartsWith(rootPrefix,
+                x.RutaLocal.StartsWith(prefix,
                     StringComparison.OrdinalIgnoreCase)).ToList();
-
-            var missingFiles = mapped.Where(x =>
+            var missing = mapped.Where(x =>
                 x.Tipo == SyncItemType.File &&
                 x.ArchivoRemotoId.HasValue &&
                 !File.Exists(x.RutaLocal)).ToList();
-
-            if (missingFiles.Count == 0)
+            if (missing.Count == 0)
                 continue;
 
             var candidates = Directory.EnumerateFiles(
                     root, "*", SearchOption.AllDirectories)
                 .Where(x => !IsInternalSyncFileName(Path.GetFileName(x)))
-                .Where(x => !mapped.Any(item =>
-                    PathsEqual(item.RutaLocal, x)))
+                .Where(x => !mapped.Any(y => PathsEqual(y.RutaLocal, x)))
                 .ToList();
 
-            foreach (var missing in missingFiles)
+            foreach (var item in missing)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
-                if (!baselineById.TryGetValue(missing.SyncItemId,
-                        out var baseline) ||
-                    baseline.RemoteFileId != missing.ArchivoRemotoId ||
-                    string.IsNullOrWhiteSpace(baseline.LocalHash))
+                var baseline = baselines.SingleOrDefault(x =>
+                    x.SyncItemId == item.SyncItemId &&
+                    x.RemoteFileId == item.ArchivoRemotoId);
+                if (baseline is null ||
+                    !HashesEqual(baseline.LocalHash, baseline.RemoteHash) ||
+                    !baseline.RemoteVersion.HasValue)
                     continue;
 
+                var matches = new List<string>();
                 foreach (var candidate in candidates)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
                     ValidatePathWithoutLinks(candidate);
-                    var hash = await HashLocalAsync(
-                        candidate, cancellationToken);
-
-                    if (HashesEqual(hash, baseline.LocalHash))
-                    {
-                        throw new InvalidOperationException(
-                            $"Posible renombrado o movimiento detectado: " +
-                            $"'{missing.RutaLocal}' -> '{candidate}'. " +
-                            "Se bloqueó el ciclo para conservar la identidad " +
-                            "remota y evitar una eliminación o duplicación.");
-                    }
+                    if (HashesEqual(await HashLocalAsync(candidate,
+                            cancellationToken), baseline.LocalHash))
+                        matches.Add(candidate);
                 }
+
+                if (matches.Count == 0)
+                    continue;
+                if (matches.Count != 1)
+                    throw new InvalidOperationException(
+                        $"Movimiento ambiguo de '{item.RutaLocal}': " +
+                        "varios archivos tienen el mismo contenido.");
+
+                var destination = matches[0];
+                var folderPath = Path.GetDirectoryName(destination)!;
+                var folderMappings = items.Where(x =>
+                    x.Tipo == SyncItemType.Folder &&
+                    x.CarpetaRemotaId.HasValue &&
+                    PathsEqual(x.RutaLocal, folderPath)).ToList();
+                if (folderMappings.Count != 1)
+                    throw new InvalidOperationException(
+                        $"La carpeta destino '{folderPath}' no tiene " +
+                        "una asociación remota única y verificable.");
+
+                var remote = snapshot.Files.SingleOrDefault(x =>
+                    x.Id == item.ArchivoRemotoId);
+                if (remote is null ||
+                    remote.Version != baseline.RemoteVersion ||
+                    !HashesEqual(remote.HashSha256, baseline.RemoteHash))
+                    throw new InvalidOperationException(
+                        $"El archivo remoto de '{item.RutaLocal}' cambió. " +
+                        "Se bloqueó el movimiento para proteger el historial.");
+
+                var newName = Path.GetFileName(destination);
+                ValidateRemoteName(newName);
+                var folderId = folderMappings[0].CarpetaRemotaId!.Value;
+                if (snapshot.Files.Any(x => x.Id != remote.Id &&
+                    x.CarpetaId == folderId && NamesEqual(x.Nombre, newName)) ||
+                    snapshot.Folders.Any(x => x.CarpetaPadreId == folderId &&
+                        NamesEqual(x.Nombre, newName)))
+                    throw new InvalidOperationException(
+                        $"El destino remoto '{destination}' ya está ocupado.");
+
+                plans.Add((item, destination, folderId, newName, baseline));
+            }
+        }
+
+        if (plans.GroupBy(x => x.Destination,
+                StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1))
+            throw new InvalidOperationException(
+                "Varios archivos remotos apuntan al mismo destino local.");
+
+        // La prevalidación completa termina antes de la primera escritura remota.
+        foreach (var plan in plans)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var remote = (await _api.GetSnapshotAsync(cancellationToken))
+                .Files.SingleOrDefault(x => x.Id == plan.Item.ArchivoRemotoId);
+            if (remote is null ||
+                remote.Version != plan.Baseline.RemoteVersion ||
+                !HashesEqual(remote.HashSha256, plan.Baseline.RemoteHash))
+                throw new InvalidOperationException(
+                    $"El archivo remoto cambió antes de mover '{plan.Destination}'.");
+
+            // Cada paso es reintentable: si el servidor aceptó el cambio
+            // antes de una interrupción, no se vuelve a ejecutar.
+            if (remote.CarpetaId != plan.FolderId)
+                await _api.MoveRemoteFileAsync(remote.Id, plan.FolderId,
+                    cancellationToken);
+            if (!NamesEqual(remote.Nombre, plan.NewName))
+                await _api.RenameRemoteFileAsync(remote.Id, plan.NewName,
+                    cancellationToken);
+
+            await _api.UpdateItemPathAsync(plan.Item.SyncItemId,
+                plan.Destination, cancellationToken);
+
+            var updated = (await _baselines.LoadAsync(cancellationToken))
+                .ToList();
+            var existing = updated.SingleOrDefault(x =>
+                x.SyncItemId == plan.Item.SyncItemId);
+            if (existing is not null)
+            {
+                existing.LocalPath = plan.Destination;
+                await _baselines.SaveAsync(updated, cancellationToken);
             }
         }
     }
