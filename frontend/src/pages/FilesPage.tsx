@@ -776,6 +776,7 @@ export default function FilesPage() {
         ...clipboard.fileIds.map(id => ({ id, kind: 'files' as const })),
       ]
       for (const entry of entries) {
+        const source = await apiRequest<{ nombre: string }>(`/${entry.kind}/${entry.id}`)
         const payload = {
           destinationFolderId,
           fileIds: entry.kind === 'files' ? [entry.id] : [],
@@ -794,7 +795,7 @@ export default function FilesPage() {
             const choice = await Swal.fire({
               icon: 'warning',
               title: 'Nombre duplicado',
-              text: 'Ya existe un elemento con el mismo nombre en el destino.',
+              text: `Ya existe "${source.nombre}" en la carpeta de destino. ¿Qué deseas hacer?`,
               showDenyButton: true,
               showCancelButton: true,
               confirmButtonText: 'Conservar ambos',
