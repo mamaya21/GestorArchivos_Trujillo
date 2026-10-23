@@ -112,6 +112,95 @@ public sealed class SyncReconnectRegressionTests
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
     }
 
+    [Fact]
+    public async Task LostFolderCreateResponse_RetryAfterReconnect_ReusesSameRemoteFolder()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync("/api/sync/devices/register",
+            new { name = $"RetryFolder-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"replay-{Guid.NewGuid():N}";
+        var path = $"C:\\SyncReplay\\{name}";
+        var request = new { parentFolderId = root, name, localPath = path };
+
+        Guid originalFolder;
+        Guid originalMapping;
+        using (var first = SyncClient(token))
+        using (var created = await first.PostAsJsonAsync("/api/sync/folders/atomic", request))
+        {
+            await RequireSuccess(created);
+            using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            originalFolder = json.RootElement.GetProperty("remoteFolderId").GetGuid();
+            originalMapping = json.RootElement.GetProperty("syncItemId").GetGuid();
+            Assert.False(json.RootElement.GetProperty("alreadyExisted").GetBoolean());
+        }
+
+        // Simula respuesta perdida: repetir exactamente la operación desde otra conexión.
+        using (var restarted = SyncClient(token))
+        using (var replay = await restarted.PostAsJsonAsync("/api/sync/folders/atomic", request))
+        {
+            await RequireSuccess(replay);
+            using var json = JsonDocument.Parse(await replay.Content.ReadAsStringAsync());
+            Assert.True(json.RootElement.GetProperty("alreadyExisted").GetBoolean());
+            Assert.Equal(originalFolder, json.RootElement.GetProperty("remoteFolderId").GetGuid());
+            Assert.Equal(originalMapping, json.RootElement.GetProperty("syncItemId").GetGuid());
+        }
+    }
+
+    [Fact]
+    public async Task LostFileCreateResponse_RetryAfterReconnect_ReusesSameRemoteFile()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync("/api/sync/devices/register",
+            new { name = $"RetryFile-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"replay-{Guid.NewGuid():N}.txt";
+        var path = $"C:\\SyncReplay\\{name}";
+        var payload = System.Text.Encoding.UTF8.GetBytes("Replay content must be unique and unchanged.");
+
+        static MultipartFormDataContent Content(Guid folder, string localPath,
+            string fileName, byte[] bytes)
+        {
+            var form = new MultipartFormDataContent();
+            form.Add(new StringContent(folder.ToString()), "folderId");
+            form.Add(new StringContent(localPath), "localPath");
+            form.Add(new ByteArrayContent(bytes), "file", fileName);
+            return form;
+        }
+
+        Guid originalFile;
+        Guid originalMapping;
+        using (var first = SyncClient(token))
+        using (var body = Content(root, path, name, payload))
+        using (var created = await first.PostAsync("/api/sync/files/atomic", body))
+        {
+            await RequireSuccess(created);
+            using var json = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            originalFile = json.RootElement.GetProperty("remoteFileId").GetGuid();
+            originalMapping = json.RootElement.GetProperty("syncItemId").GetGuid();
+            Assert.False(json.RootElement.GetProperty("alreadyExisted").GetBoolean());
+        }
+
+        using (var restarted = SyncClient(token))
+        using (var body = Content(root, path, name, payload))
+        using (var replay = await restarted.PostAsync("/api/sync/files/atomic", body))
+        {
+            await RequireSuccess(replay);
+            using var json = JsonDocument.Parse(await replay.Content.ReadAsStringAsync());
+            Assert.True(json.RootElement.GetProperty("alreadyExisted").GetBoolean());
+            Assert.Equal(originalFile, json.RootElement.GetProperty("remoteFileId").GetGuid());
+            Assert.Equal(originalMapping, json.RootElement.GetProperty("syncItemId").GetGuid());
+        }
+    }
+
     private HttpClient Client() => _factory.CreateClient(new()
     {
         AllowAutoRedirect = false,
