@@ -570,6 +570,19 @@ export default function FilesPage() {
     }
   }
 
+  function copySelected() {
+    if (!selectedCount || moving || !currentFolderId) return
+    setCopyClipboard({
+      folderIds: [...selectedFolders],
+      fileIds: [...selectedFiles],
+      sourceFolderId: currentFolderId,
+    })
+    setMoveClipboard(null)
+    setSelectedFolders(new Set())
+    setSelectedFiles(new Set())
+    setMessage(`${selectedCount} elemento(s) copiado(s) al portapapeles. Abre la carpeta de destino y selecciona Pegar.`)
+  }
+
   function cutSelected() {
     if (!selectedCount || moving || !currentFolderId) return
     setMoveClipboard({
@@ -1772,6 +1785,7 @@ export default function FilesPage() {
             ) : (
               <>
                 <span className="explorer-selection-count">{selectedCount} seleccionado(s)</span>
+                <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={copySelected}>Copiar</button>
                 <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={cutSelected}>Cortar</button>
                 <button type="button" onClick={() => { setSelectedFolders(new Set()); setSelectedFiles(new Set()) }}>Deseleccionar</button>
               </>
