@@ -126,15 +126,23 @@ public sealed class SyncAtomicFileController : ControllerBase
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 x => x.DispositivoId == deviceId &&
-                     x.RutaLocal == localPath &&
-                     x.Activo,
+                     x.RutaLocal == localPath,
                 cancellationToken);
 
+        var reuseTrashedMapping = false;
         if (existingItem is not null)
         {
-            if (!existingItem.Activo ||
+            if (existingItem.Tipo == TipoElementoSync.Archivo &&
+                existingItem.ArchivoRemotoId.HasValue)
+            {
+                reuseTrashedMapping = await _db.Archivos.AsNoTracking().AnyAsync(
+                    x => x.Id == existingItem.ArchivoRemotoId.Value &&
+                         x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
+            }
+
+            if (!reuseTrashedMapping && (!existingItem.Activo ||
                 existingItem.Tipo != TipoElementoSync.Archivo ||
-                !existingItem.ArchivoRemotoId.HasValue)
+                !existingItem.ArchivoRemotoId.HasValue))
             {
                 return Conflict(new
                 {
@@ -142,6 +150,8 @@ public sealed class SyncAtomicFileController : ControllerBase
                 });
             }
 
+            if (!reuseTrashedMapping)
+            {
             var existingFile = await _db.Archivos
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
@@ -169,6 +179,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                 existingFile.Version,
                 alreadyExisted = true
             });
+            }
         }
 
         var duplicate = await _db.Archivos
@@ -239,16 +250,25 @@ public sealed class SyncAtomicFileController : ControllerBase
                 CreadoPorUsuarioId = userId
             };
 
-            var syncItem = new ElementoSync
+            var syncItem = reuseTrashedMapping
+                ? await _db.ElementosSync.SingleAsync(
+                    x => x.Id == existingItem!.Id, cancellationToken)
+                : new ElementoSync
+                {
+                    DispositivoId = deviceId,
+                    RutaLocal = localPath,
+                    Tipo = TipoElementoSync.Archivo,
+                    ArchivoRemotoId = fileId
+                };
+            if (reuseTrashedMapping)
             {
-                DispositivoId = deviceId,
-                RutaLocal = localPath,
-                Tipo = TipoElementoSync.Archivo,
-                ArchivoRemotoId = fileId
-            };
+                syncItem.ArchivoRemotoId = fileId;
+                syncItem.Activo = true;
+            }
 
             _db.Archivos.Add(remoteFile);
-            _db.ElementosSync.Add(syncItem);
+            if (!reuseTrashedMapping)
+                _db.ElementosSync.Add(syncItem);
 
             await _changes.RegisterAsync(
                 folderId,
