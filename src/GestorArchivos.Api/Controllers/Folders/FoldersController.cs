@@ -298,11 +298,6 @@ public class FoldersController : ControllerBase
         if (!folder.CarpetaPadreId.HasValue)
             return BadRequest(new { message = "No se puede renombrar una carpeta raíz protegida." });
 
-        if (await IsSelectorManagedRootAsync(id, cancellationToken))
-            return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
-
-
-
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
                 id,
