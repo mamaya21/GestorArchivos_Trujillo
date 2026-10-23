@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using GestorArchivos.Api.Security;
+using GestorArchivos.Application.Common.Interfaces;
 using GestorArchivos.Application.Common.Security;
 using GestorArchivos.Domain.Entities;
 using GestorArchivos.Domain.Enums;
@@ -18,13 +19,16 @@ public class SyncController : ControllerBase
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IFolderPermissionService _permissionService;
+    private readonly ISyncChangeService _changes;
 
     public SyncController(
         ApplicationDbContext dbContext,
-        IFolderPermissionService permissionService)
+        IFolderPermissionService permissionService,
+        ISyncChangeService changes)
     {
         _dbContext = dbContext;
         _permissionService = permissionService;
+        _changes = changes;
     }
 
     [HttpGet("changes")]
@@ -618,6 +622,9 @@ public class SyncController : ControllerBase
             file.EliminacionLoteId = null;
             file.FechaModificacion = now;
         }
+        await _changes.RegisterAsync(device.RootFolderId, null, root.Id,
+            "FOLDER_CREATED", sourceDeviceId: deviceId,
+            cancellationToken: cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
         return Ok(new { remoteFolderId = root.Id, syncItemId = existing.Id });
