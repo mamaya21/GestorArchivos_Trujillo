@@ -1971,3 +1971,12 @@ button:disabled {
 @media (max-width: 760px) {
   .file-manager .explorer-tools .explorer-selection-bar { width: 100%; margin-left: 0; justify-content: flex-start; }
 }
+
+/* Windows Explorer-style cut feedback: temporary ghosted items */
+.file-manager .explorer-row-cut .item-name,
+.file-manager .explorer-row-cut .item-icon,
+.file-manager .explorer-row-cut > span:not(:first-child) {
+  opacity: .42;
+  transition: opacity .15s ease;
+}
+.file-manager .explorer-row-cut .item-name { color: #64748b; }
