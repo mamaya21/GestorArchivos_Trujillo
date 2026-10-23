@@ -1610,8 +1610,8 @@ export default function FilesPage() {
           icon: 'success',
           title: 'Equipo desvinculado de forma segura',
           text: confirm.value === 'discard'
-            ? 'La carpeta web se trasladó a Papelera. Los archivos locales se conservaron. Reinicia el servicio Windows antes de iniciar una sincronización nueva.'
-            : 'Los archivos locales y remotos se conservaron. Reinicia el servicio Windows antes de activar una sincronización nueva.',
+            ? 'La carpeta web se trasladó a Papelera. Los archivos locales se conservaron. Ya puedes iniciar una sincronización nueva.'
+            : 'Los archivos locales y remotos se conservaron. Ya puedes volver a activar la sincronización.',
         })
         return
       }
