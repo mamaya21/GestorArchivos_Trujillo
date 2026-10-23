@@ -1379,44 +1379,41 @@ export default function FilesPage() {
         </div>
 
         <div className="toolbar-actions">
-          <button
-            type="button"
-            onClick={() => void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
-              .then(response => {
-                if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
-              })
-              .catch(() => void Swal.fire({
-                icon: 'error',
-                title: 'Selector de Windows no disponible',
-                text: 'Abre una vez el selector de Gestor Archivos desde Windows para iniciar el agente local.',
-              }))}
-            title="Abrir el selector de carpetas y archivos de Windows"
-          >
-            Seleccionar sincronización
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void openSyncManagement()}
-          >
-            Administrar sincronización
-          </button>
-
-          <button type="button" disabled={!!upload} onClick={() => void createTextFile()}>
-            + Nuevo archivo .txt
-          </button>
-
-          <button type="button" onClick={createFolder}>
-            + Nueva carpeta
-          </button>
-
-          <button
-            type="button"
-            disabled={!currentFolderId || !!upload}
-            onClick={() => fileInput.current?.click()}
-          >
-            ↑ Subir archivos
-          </button>
+          <div className="file-primary-actions">
+            <button className="file-action-primary" type="button" disabled={!currentFolderId || !!upload} onClick={() => void createTextFile()}>
+              <span aria-hidden="true">＋</span> Nuevo archivo
+            </button>
+            <button type="button" disabled={!!upload} onClick={createFolder}>
+              <span aria-hidden="true">＋</span> Nueva carpeta
+            </button>
+            <button type="button" disabled={!currentFolderId || !!upload} onClick={() => fileInput.current?.click()}>
+              <span aria-hidden="true">↑</span> Subir archivos
+            </button>
+          </div>
+          <details className="file-sync-dropdown">
+            <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
+            <div className="file-sync-dropdown-menu">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+                    .then(response => {
+                      if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
+                    })
+                    .catch(() => void Swal.fire({
+                      icon: 'error',
+                      title: 'Selector de Windows no disponible',
+                      text: 'Abre una vez el selector de Gestor Archivos desde Windows para iniciar el agente local.',
+                    }))
+                }}
+              >Seleccionar sincronización</button>
+              <button type="button" onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open')
+                void openSyncManagement()
+              }}>Administrar sincronización</button>
+            </div>
+          </details>
 
           <input
             ref={fileInput}
