@@ -21,8 +21,18 @@ try {
     Push-Location (Join-Path $root 'frontend')
     try {
         Write-Host 'Checking frontend...'
-        npm ci
-        if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+        # Reuse installed dependencies during local checks. npm ci deletes and
+        # reinstalls node_modules, which fails on Windows when the dev server
+        # has loaded native modules (for example Rolldown).
+        $requiredTools = @('node_modules/.bin/vite.cmd', 'node_modules/.bin/tsc.cmd', 'node_modules/.bin/eslint.cmd')
+        $missingTools = @($requiredTools | Where-Object { -not (Test-Path $_) })
+        if ($missingTools.Count -gt 0) {
+            Write-Host 'Frontend dependencies missing; installing...'
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw 'npm ci failed. Close the frontend dev server before installing dependencies.' }
+        } else {
+            Write-Host 'Using existing frontend dependencies (no npm ci while the dev server is running).'
+        }
         npm run build
         if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
         npm run lint
