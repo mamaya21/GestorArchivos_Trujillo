@@ -309,6 +309,53 @@ public sealed class SyncReconnectRegressionTests
     }
 
     [Fact]
+    public async Task SyncUpload_CompletedChunks_CreateFileAndMappingAtomically()
+    {
+        using var owner = Client();
+        await Login(owner);
+        using var registration = await owner.PostAsJsonAsync(
+            "/api/sync/devices/register",
+            new { name = $"CompletedChunks-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await RequireSuccess(registration);
+        using var device = JsonDocument.Parse(await registration.Content.ReadAsStringAsync());
+        var root = device.RootElement.GetProperty("rootFolderId").GetGuid();
+        var token = device.RootElement.GetProperty("token").GetString()!;
+        var name = $"chunk-created-{Guid.NewGuid():N}.txt";
+        var path = $"C:\\SyncReplay\\{name}";
+        var bytes = System.Text.Encoding.UTF8.GetBytes("Atomic chunk publication");
+
+        using var sync = SyncClient(token);
+        using var initialized = await sync.PostAsJsonAsync(
+            "/api/sync/uploads/initialize",
+            new { folderId = root, fileName = name, fileSize = bytes.Length });
+        await RequireSuccess(initialized);
+        using var initJson = JsonDocument.Parse(await initialized.Content.ReadAsStringAsync());
+        var uploadId = initJson.RootElement.GetProperty("uploadId").GetGuid();
+
+        using (var chunk = new ByteArrayContent(bytes))
+        using (var sent = await sync.PutAsync(
+            $"/api/sync/uploads/{uploadId}/chunks/0", chunk))
+            Assert.Equal(HttpStatusCode.NoContent, sent.StatusCode);
+
+        using var completed = await sync.PostAsJsonAsync(
+            $"/api/sync/files/atomic/uploads/{uploadId}/complete",
+            new { localPath = path });
+        await RequireSuccess(completed);
+        using var result = JsonDocument.Parse(await completed.Content.ReadAsStringAsync());
+        var remoteId = result.RootElement.GetProperty("remoteFileId").GetGuid();
+        Assert.NotEqual(Guid.Empty, remoteId);
+        Assert.NotEqual(Guid.Empty, result.RootElement.GetProperty("syncItemId").GetGuid());
+        Assert.Equal(name, result.RootElement.GetProperty("nombre").GetString());
+        Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
+            result.RootElement.GetProperty("hashSha256").GetString());
+
+        using var file = await sync.GetAsync($"/api/sync/read/files/{remoteId}");
+        await RequireSuccess(file);
+        using var status = await sync.GetAsync($"/api/sync/uploads/{uploadId}/status");
+        Assert.Equal(HttpStatusCode.NotFound, status.StatusCode);
+    }
+
+    [Fact]
     public async Task SyncUpload_DeviceSession_IsNotAccessibleToAnotherDevice()
     {
         using var owner = Client();
