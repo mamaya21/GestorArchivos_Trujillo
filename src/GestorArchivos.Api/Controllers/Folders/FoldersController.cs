@@ -307,10 +307,11 @@ public class FoldersController : ControllerBase
         if (folder is null)
             return NotFound();
 
+        // A manually created top-level folder is not a protected sync root.
+        // Only the actual device container and selector-managed roots need
+        // special handling; the latter are blocked below.
         var isDeviceContainer = await _dbContext.DispositivosSync.AsNoTracking()
             .AnyAsync(x => x.CarpetaRaizId == id, cancellationToken);
-        if (!folder.CarpetaPadreId.HasValue && !isDeviceContainer)
-            return BadRequest(new { message = "No se puede renombrar una carpeta raíz protegida." });
 
         if (await IsSelectorManagedRootAsync(id, cancellationToken))
             return Conflict(new { message = "El renombrado de esta raíz requiere actualizar primero el agente y el selector." });
