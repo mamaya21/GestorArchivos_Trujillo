@@ -1786,3 +1786,12 @@ button:disabled {
   .file-manager .explorer-row { min-height: 58px; }
   .file-context-menu { width: min(250px, calc(100vw - 16px)); }
 }
+
+/* Precise folder tree alignment: disclosure, icon and text share a fixed baseline */
+.file-manager .folder-sidebar .tree-root { display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 7px 10px; border-radius: 8px; font-size: 13px; }
+.file-manager .folder-sidebar .tree-root:hover { background: #f3f7ff; }
+.file-manager .folder-sidebar .tree-entry { display: grid; grid-template-columns: 18px minmax(0,1fr); align-items: center; column-gap: 5px; min-height: 38px; }
+.file-manager .folder-sidebar .tree-entry > button:first-child { display: grid; place-items: center; width: 18px; height: 30px; min-width: 18px; padding: 0; margin: 0; font-size: 11px; line-height: 1; }
+.file-manager .folder-sidebar .tree-entry .tree-label { display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 5px 2px; margin: 0; font-size: 13px; line-height: 1.3; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-manager .folder-sidebar .tree-entry .tree-label .folder-glyph { display: block; flex: 0 0 19px; width: 19px; height: 19px; }
+.file-manager .folder-sidebar .tree-entry .tree-label .folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
