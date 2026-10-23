@@ -20,6 +20,8 @@ public sealed class SelectiveSyncService
     private readonly SelectiveSyncMappingService _mapping;
     private bool _suppressDestructiveOperations;
 
+    private static readonly string RemovalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GestorArchivos", "Sync", "removal-requests.json");
+
     private static readonly string SelectionGuardPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "selection-guard.txt");
@@ -53,6 +55,7 @@ public sealed class SelectiveSyncService
         CancellationToken cancellationToken = default)
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
+        await ProcessRemovalRequestsAsync(selections, cancellationToken);
 
         var fingerprint = ComputeSelectionFingerprint(selections);
         var previousFingerprint = File.Exists(SelectionGuardPath)
@@ -1821,6 +1824,66 @@ public sealed class SelectiveSyncService
             return StringComparer.OrdinalIgnoreCase.GetHashCode(
                 value.Normalize(NormalizationForm.FormC));
         }
+    }
+
+
+    private async Task ProcessRemovalRequestsAsync(
+        IReadOnlyList<Selection> selections, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(RemovalPath)) return;
+        var requests = JsonSerializer.Deserialize<List<RemovalRequest>>(
+            await File.ReadAllTextAsync(RemovalPath, cancellationToken)) ?? new();
+        if (requests.Count == 0) { File.Delete(RemovalPath); return; }
+
+        foreach (var request in requests.ToArray())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(request.Path) ||
+                !Path.IsPathFullyQualified(request.Path) ||
+                (request.Kind != 0 && request.Kind != 1))
+                throw new InvalidOperationException("Solicitud de retirada inválida.");
+
+            var path = Path.GetFullPath(request.Path);
+            // Nunca retirar contenido que volvió a seleccionarse, ni contenido
+            // que contiene una selección todavía activa.
+            if (selections.Any(x => PathsEqual(x.Path, path) ||
+                (request.Kind == 1 && Path.GetFullPath(x.Path).StartsWith(
+                    Path.TrimEndingDirectorySeparator(path) + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))))
+                throw new InvalidOperationException(
+                    $"No se puede enviar a la papelera una selección activa: {path}");
+
+            var items = await _api.GetItemsAsync(cancellationToken);
+            var matches = items.Where(x => PathsEqual(x.RutaLocal, path) &&
+                (request.Kind == 0 ? x.Tipo == SyncItemType.File : x.Tipo == SyncItemType.Folder)).ToList();
+            if (matches.Count != 1)
+                throw new InvalidOperationException(
+                    $"No existe una asociación única para retirar: {path}");
+
+            var item = matches[0];
+            if (request.Kind == 0 && item.ArchivoRemotoId.HasValue)
+            {
+                // La API comprueba dispositivo, permisos y pertenencia a la raíz.
+                await _api.TrashSelectedFileAsync(item.ArchivoRemotoId.Value, cancellationToken);
+            }
+            else if (request.Kind == 1 && item.CarpetaRemotaId.HasValue)
+            {
+                await _api.TrashSelectedFolderAsync(item.CarpetaRemotaId.Value, cancellationToken);
+            }
+            else throw new InvalidOperationException($"Asociación remota inválida: {path}");
+
+            // Mantener la solicitud hasta que la API haya confirmado el traslado.
+            requests.Remove(request);
+            await File.WriteAllTextAsync(RemovalPath,
+                JsonSerializer.Serialize(requests), cancellationToken);
+        }
+        if (requests.Count == 0) File.Delete(RemovalPath);
+    }
+
+    private sealed class RemovalRequest
+    {
+        public string Path { get; set; } = string.Empty;
+        public int Kind { get; set; }
     }
 
     private sealed class Selection
