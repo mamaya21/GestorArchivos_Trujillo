@@ -254,6 +254,153 @@ public class FilesController : ControllerBase
             });
     }
 
+
+    public sealed record CopySelectionRequest(
+        Guid DestinationFolderId,
+        Guid[]? FileIds,
+        Guid[]? FolderIds,
+        string? ConflictResolution = null);
+
+    [HttpPost("copy-selection")]
+    public async Task<IActionResult> CopySelection(
+        CopySelectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var destination = await _dbContext.Carpetas.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
+        if (destination is null) return NotFound(new { message = "Carpeta de destino no disponible." });
+        var userId = CurrentUserId();
+        if (!await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Crear, cancellationToken))
+            return Forbid();
+
+        var folderIds = (request.FolderIds ?? []).Distinct().ToArray();
+        var fileIds = (request.FileIds ?? []).Distinct().ToArray();
+        if (folderIds.Length + fileIds.Length != 1)
+            return BadRequest(new { message = "Copie un elemento por solicitud para resolver conflictos de forma segura." });
+
+        var sourceFolder = folderIds.Length == 1
+            ? await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == folderIds[0] && !x.EnPapelera, cancellationToken)
+            : null;
+        var sourceFile = fileIds.Length == 1
+            ? await _dbContext.Archivos.AsNoTracking().FirstOrDefaultAsync(x => x.Id == fileIds[0] && x.Estado == EstadoArchivo.Activo, cancellationToken)
+            : null;
+        if (sourceFolder is null && sourceFile is null) return NotFound();
+        if (sourceFolder is not null && !sourceFolder.CarpetaPadreId.HasValue)
+            return BadRequest(new { message = "No se puede copiar una carpeta raíz protegida." });
+
+        var originalName = sourceFolder?.Nombre ?? sourceFile!.Nombre;
+        var isFolder = sourceFolder is not null;
+        async Task<bool> ExistsAsync(Guid parentId, string name) =>
+            await _dbContext.Carpetas.AnyAsync(x => x.CarpetaPadreId == parentId && x.Nombre == name && !x.EnPapelera, cancellationToken) ||
+            await _dbContext.Archivos.AnyAsync(x => x.CarpetaId == parentId && x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
+
+        var finalName = originalName;
+        if (await ExistsAsync(destination.Id, finalName))
+        {
+            if (request.ConflictResolution == "skip") return Ok(new { skipped = true });
+            if (request.ConflictResolution != "keepBoth")
+                return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+
+            var ext = isFolder ? string.Empty : Path.GetExtension(originalName);
+            var stem = ext.Length == 0 ? originalName : originalName[..^ext.Length];
+            var found = false;
+            for (var i = 1; i <= 10000; i++)
+            {
+                var candidate = $"{stem} ({i}){ext}";
+                if (!FileNameValidator.TryValidate(candidate, out _, out _)) break;
+                if (await ExistsAsync(destination.Id, candidate)) continue;
+                finalName = candidate;
+                found = true;
+                break;
+            }
+            if (!found) return Conflict(new { message = "No se pudo generar un nombre disponible." });
+        }
+
+        // La copia completa se prepara antes de persistir. Los archivos físicos
+        // nuevos se eliminan si falla cualquier paso.
+        var copiedPaths = new List<string>();
+        var committed = false;
+        var visited = new HashSet<Guid>();
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            async Task CopyFileAsync(Archivo original, Guid parentId, string name)
+            {
+                if (!await _permissionService.HasPermissionAsync(userId, original.CarpetaId, PermisoCarpeta.Leer, cancellationToken))
+                    throw new UnauthorizedAccessException("Sin permiso de lectura sobre un archivo.");
+
+                var newId = Guid.NewGuid();
+                var physical = Path.Combine(DateTime.UtcNow.ToString("yyyy"), DateTime.UtcNow.ToString("MM"),
+                    $"{newId:N}{Path.GetExtension(original.Nombre)}");
+                await using (var input = await _fileStorage.OpenReadAsync(original.NombreFisico, cancellationToken))
+                    await _fileStorage.SaveAsync(physical, input, cancellationToken);
+                copiedPaths.Add(physical);
+
+                _dbContext.Archivos.Add(new Archivo
+                {
+                    Id = newId, CarpetaId = parentId, Nombre = name,
+                    NombreFisico = physical, Extension = Path.GetExtension(name),
+                    TipoContenido = original.TipoContenido, TamanoBytes = original.TamanoBytes,
+                    HashSha256 = original.HashSha256, Version = 1, CreadoPorUsuarioId = userId
+                });
+                await _syncChangeService.RegisterAsync(parentId, newId, null, "FILE_CREATED", 1,
+                    cancellationToken: cancellationToken);
+            }
+
+            async Task CopyFolderAsync(Guid originalId, Guid parentId, string name)
+            {
+                if (!visited.Add(originalId))
+                    throw new InvalidOperationException("Se detectó un ciclo en la estructura de carpetas.");
+                if (!await _permissionService.HasPermissionAsync(userId, originalId, PermisoCarpeta.Leer, cancellationToken))
+                    throw new UnauthorizedAccessException("Sin permiso de lectura sobre una subcarpeta.");
+
+                var newFolder = new Carpeta { Id = Guid.NewGuid(), Nombre = name,
+                    CarpetaPadreId = parentId, CreadoPorUsuarioId = userId };
+                _dbContext.Carpetas.Add(newFolder);
+                await _syncChangeService.RegisterAsync(parentId, null, newFolder.Id, "FOLDER_CREATED",
+                    cancellationToken: cancellationToken);
+
+                var originals = await _dbContext.Archivos.AsNoTracking()
+                    .Where(x => x.CarpetaId == originalId && x.Estado == EstadoArchivo.Activo)
+                    .ToListAsync(cancellationToken);
+                foreach (var original in originals)
+                    await CopyFileAsync(original, newFolder.Id, original.Nombre);
+
+                var children = await _dbContext.Carpetas.AsNoTracking()
+                    .Where(x => x.CarpetaPadreId == originalId && !x.EnPapelera)
+                    .ToListAsync(cancellationToken);
+                foreach (var child in children)
+                    await CopyFolderAsync(child.Id, newFolder.Id, child.Nombre);
+            }
+
+            if (sourceFile is not null) await CopyFileAsync(sourceFile, destination.Id, finalName);
+            else await CopyFolderAsync(sourceFolder!.Id, destination.Id, finalName);
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            committed = true;
+            return Ok(new { copied = true, name = finalName });
+        }
+        catch (UnauthorizedAccessException) { await transaction.RollbackAsync(CancellationToken.None); return Forbid(); }
+        catch (Exception)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        finally
+        {
+            if (!committed)
+            {
+                _dbContext.ChangeTracker.Clear();
+                foreach (var path in copiedPaths)
+                {
+                    try { await _fileStorage.DeleteAsync(path, CancellationToken.None); }
+                    catch { /* Se preserva el error original; limpieza pendiente en almacenamiento. */ }
+                }
+            }
+        }
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(
         Guid id,
