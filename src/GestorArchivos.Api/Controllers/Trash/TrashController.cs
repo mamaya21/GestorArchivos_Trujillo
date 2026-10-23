@@ -310,7 +310,22 @@ public sealed class TrashController : ControllerBase
                             x.Nombre == folder.Nombre,
                         cancellationToken);
 
-            if (duplicate)
+            if (duplicate && conflictResolution == "keepBoth")
+            {
+                var originalName = folder.Nombre;
+                var renamed = false;
+                for (var n = 1; n <= 10000; n++)
+                {
+                    var candidate = $"{originalName} ({n})";
+                    if (!FileNameValidator.TryValidate(candidate, out _, out _)) break;
+                    if (await _dbContext.Carpetas.AnyAsync(x => x.Id != folder.Id && x.CarpetaPadreId == folder.CarpetaPadreId && x.Nombre == candidate && !x.EnPapelera, cancellationToken)) continue;
+                    folder.Nombre = candidate;
+                    renamed = true;
+                    break;
+                }
+                if (!renamed) return Conflict(new { message = "No se pudo generar un nombre disponible." });
+            }
+            else if (duplicate)
             {
                 return Conflict(new
                 {
