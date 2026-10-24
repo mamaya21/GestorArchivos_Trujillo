@@ -143,11 +143,12 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $remoteId = $null
     while ([DateTime]::UtcNow -lt $deadline) {
-        $items = @(Invoke-RestMethod -Uri "$base/api/sync/items" -Headers $headers)
+        $itemsResponse = Invoke-RestMethod -Uri "$base/api/sync/items" -Headers $headers
+        $items = @($itemsResponse)
         $matches = @($items | Where-Object { $_.rutaLocal -eq $localPath -and $_.archivoRemotoId })
         if ($matches.Count -gt 1) { throw 'Se detectaron asociaciones duplicadas.' }
         if ($matches.Count -eq 1) {
-            $remoteId = [guid]$matches[0].archivoRemotoId
+            $remoteId = [guid]([string]$matches[0].archivoRemotoId)
             break
         }
         Start-Sleep -Seconds 2
