@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
-Prueba real de recuperación del servicio Windows Sync.
-Requiere PowerShell elevado, servicio activo y una carpeta seleccionada.
+Prueba real de recuperación del ejecutable Windows Sync.
+Requiere PowerShell elevado, proceso activo y una carpeta seleccionada.
 No modifica credenciales, selecciones ni datos existentes.
 #>
 [CmdletBinding()]
@@ -15,15 +15,31 @@ if ($SizeMB -lt 129 -or $SizeMB -gt 2048) { throw 'SizeMB debe estar entre 129 y
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    throw 'Ejecuta PowerShell como administrador: la prueba debe detener y reiniciar el servicio real.'
+    throw 'Ejecuta PowerShell como administrador para interrumpir y reiniciar el proceso real.'
 }
-$serviceInfo = Get-CimInstance Win32_Service | Where-Object {
-    $_.DisplayName -eq 'Gestor Archivos Sync' -or $_.Name -eq 'Gestor Archivos Sync'
-} | Select-Object -First 1
-if (-not $serviceInfo) { throw 'No se encontró el servicio Gestor Archivos Sync instalado.' }
-$service = Get-Service -Name $serviceInfo.Name
-if ($service.Status -ne 'Running' -or $serviceInfo.ProcessId -le 0) {
-    throw 'El servicio Windows Sync debe estar ejecutándose antes de la prueba.'
+$syncProcess = @(Get-CimInstance Win32_Process -Filter "Name='GestorArchivos.Sync.Windows.exe'")
+if ($syncProcess.Count -ne 1) { throw "Se requiere exactamente un proceso GestorArchivos.Sync.Windows.exe; encontrados: $($syncProcess.Count)." }
+$originalPid = [int]$syncProcess[0].ProcessId
+$exePath = [string]$syncProcess[0].ExecutablePath
+if (-not $exePath -or -not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+    throw 'No se pudo localizar el ejecutable real de Windows Sync.'
+}
+$workingDirectory = Split-Path -Parent $exePath
+$existingLauncher = @(Get-CimInstance Win32_Process -Filter "Name='dotnet.exe'" | Where-Object {
+    $_.CommandLine -match 'run\s+--project\s+.*GestorArchivos.Sync.Windows'
+})
+if ($existingLauncher.Count -gt 0) {
+    Write-Host 'Se detectó dotnet run como lanzador. Se conservará el lanzador; no se detendrá ni modificará.'
+}
+$launchedProcess = $null
+function Get-SyncProcess {
+    @(Get-CimInstance Win32_Process -Filter "Name='GestorArchivos.Sync.Windows.exe'")
+}
+function Ensure-SyncRunning {
+    if ((Get-SyncProcess).Count -gt 0) { return }
+    $script:launchedProcess = Start-Process -FilePath $exePath -WorkingDirectory $workingDirectory -PassThru
+    Start-Sleep -Seconds 2
+    if ((Get-SyncProcess).Count -eq 0) { throw 'No fue posible reiniciar Windows Sync.' }
 }
 $selectionPath = Join-Path $env:ProgramData 'GestorArchivos\Sync\selections.json'
 if (-not (Test-Path -LiteralPath $selectionPath)) { throw 'No existe selections.json en ProgramData; no se alterarán selecciones.' }
@@ -56,12 +72,11 @@ $profiles += @(Get-CimInstance Win32_UserProfile | Where-Object { $_.LocalPath }
 $checkpointDirs = @($profiles | Where-Object { $_ } | Select-Object -Unique | ForEach-Object {
     Join-Path $_ 'GestorArchivos\Sync\uploads'
 })
-$name = 'real-service-crash-' + [guid]::NewGuid().ToString('N') + '.bin'
+$name = 'real-process-crash-' + [guid]::NewGuid().ToString('N') + '.bin'
 $localPath = Join-Path $testRoot $name
 $staging = Join-Path $env:TEMP ($name + '.staging')
 $download = Join-Path $env:TEMP ($name + '.download')
 $interrupted = $false
-$restarted = $false
 $uploadId = $null
 $checkpointFile = $null
 try {
@@ -82,8 +97,7 @@ try {
     Write-Host 'Esperando primer fragmento confirmado por la API...'
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([DateTime]::UtcNow -lt $deadline) {
-        $service.Refresh()
-        if ($service.Status -ne 'Running') { throw 'Windows Sync se detuvo antes de la interrupción controlada.' }
+        if ((Get-SyncProcess).Count -eq 0) { throw 'Windows Sync se detuvo antes de la interrupción controlada.' }
         foreach ($dir in $checkpointDirs) {
             if (-not (Test-Path -LiteralPath $dir)) { continue }
             foreach ($candidate in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
@@ -95,10 +109,12 @@ try {
                     $status = Invoke-RestMethod -Uri "$base/api/sync/uploads/$uploadId/status" -Headers $headers -ErrorAction Stop
                     $received = @($status.receivedChunks)
                     if ($received.Count -gt 0 -and $received.Count -lt [int]$status.expectedChunkCount) {
-                        $live = Get-CimInstance Win32_Service -Filter "Name='$($serviceInfo.Name.Replace("'","''"))'"
-                        if (-not $live -or $live.ProcessId -le 0) { throw 'El servicio ya no tiene un proceso activo.' }
-                        Write-Host "Interrumpiendo proceso REAL PID $($live.ProcessId), con $($received.Count) fragmento(s) confirmado(s)."
-                        Stop-Process -Id $live.ProcessId -Force -ErrorAction Stop
+                        $live = @(Get-SyncProcess)
+                        if ($live.Count -ne 1 -or [int]$live[0].ProcessId -ne $originalPid) {
+                            throw 'Cambió la identidad del proceso antes de la interrupción.'
+                        }
+                        Write-Host "Interrumpiendo proceso REAL PID $originalPid, con $($received.Count) fragmento(s) confirmado(s)."
+                        Stop-Process -Id $originalPid -Force -ErrorAction Stop
                         $interrupted = $true
                         break
                     }
@@ -117,14 +133,13 @@ try {
     }
     if (-not $interrupted) { throw 'No se observó una carga parcial dentro del tiempo establecido; no se detuvo el servicio.' }
     Start-Sleep -Seconds 2
-    $service.Refresh()
-    if ($service.Status -eq 'Running') {
-        throw 'El servicio se reinició automáticamente antes del reinicio controlado. Verifica la recuperación de Windows.'
+    $other = @(Get-SyncProcess)
+    if ($other.Count -gt 0) {
+        Write-Host 'El lanzador ya reinició Windows Sync automáticamente.'
+    } else {
+        Ensure-SyncRunning
     }
-    Start-Service -Name $serviceInfo.Name
-    $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
-    $restarted = $true
-    Write-Host 'Servicio Windows Sync reiniciado. Esperando la asociación remota...'
+    Write-Host 'Proceso Windows Sync reiniciado. Esperando la asociación remota...'
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     $remoteId = $null
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -145,11 +160,8 @@ try {
     Write-Host "APROBADO: proceso Windows Sync real interrumpido y reiniciado; $SizeMB MB íntegros; asociación única. SHA256=$expected"
     Write-Host "Archivo de prueba conservado: $localPath"
 } finally {
-    $service.Refresh()
-    if ($service.Status -ne 'Running') {
-        try { Start-Service -Name $serviceInfo.Name; Write-Warning 'Servicio restaurado tras la prueba.' }
-        catch { Write-Warning "No se pudo restaurar el servicio: $($_.Exception.Message)" }
-    }
+    try { Ensure-SyncRunning }
+    catch { Write-Warning "No se pudo restaurar Windows Sync: $($_.Exception.Message)" }
     if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Force }
     if (Test-Path -LiteralPath $download) { Remove-Item -LiteralPath $download -Force }
     if (Test-Path -LiteralPath $localPath) {
