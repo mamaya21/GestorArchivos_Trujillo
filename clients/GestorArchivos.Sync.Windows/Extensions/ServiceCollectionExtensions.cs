@@ -34,6 +34,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISyncBaselineStore, SyncBaselineStore>();
         services.AddSingleton<ILocalFileStore, LocalFileStore>();
         services.AddSingleton<SyncRuntimeState>();
+        services.AddSingleton<SyncCancellationCoordinator>();
         services.AddSingleton<SyncBaselineService>();
         services.AddSingleton<SelectiveSyncMappingService>();
         services.AddSingleton<SelectiveSyncService>();

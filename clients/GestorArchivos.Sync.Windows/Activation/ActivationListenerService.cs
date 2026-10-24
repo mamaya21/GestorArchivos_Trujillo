@@ -1,21 +1,34 @@
 using System.Net;
 using System.Text.Json;
 using GestorArchivos.Sync.Windows.Models;
+using GestorArchivos.Sync.Windows.Services;
 
 namespace GestorArchivos.Sync.Windows.Activation;
 
 public sealed class ActivationListenerService : BackgroundService
 {
     private const string AllowedOrigin = "http://localhost:5173";
+    private static readonly string PausePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "paused.flag");
 
+    private static readonly string SyncDirectory = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync");
     private readonly IActivationService _activationService;
+    private readonly SyncCancellationCoordinator _cancellation;
+    private readonly IDeviceRegistrationService _registrations;
     private readonly ILogger<ActivationListenerService> _logger;
 
     public ActivationListenerService(
         IActivationService activationService,
+        SyncCancellationCoordinator cancellation,
+        IDeviceRegistrationService registrations,
         ILogger<ActivationListenerService> logger)
     {
         _activationService = activationService;
+        _cancellation = cancellation;
+        _registrations = registrations;
         _logger = logger;
     }
 
@@ -67,14 +80,93 @@ public sealed class ActivationListenerService : BackgroundService
                 return;
             }
 
+            if (!IPAddress.IsLoopback(
+                    context.Request.RemoteEndPoint.Address))
+            {
+                context.Response.StatusCode =
+                    (int)HttpStatusCode.Forbidden;
+
+                context.Response.Close();
+                return;
+            }
+
             AddCorsHeaders(context.Response);
 
             if (context.Request.HttpMethod == "OPTIONS" &&
-                context.Request.Url?.AbsolutePath == "/activate")
+                (context.Request.Url?.AbsolutePath == "/activate" ||
+                 context.Request.Url?.AbsolutePath == "/control" ||
+                 context.Request.Url?.AbsolutePath == "/deactivate" ||
+                 context.Request.Url?.AbsolutePath == "/quiesce"))
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NoContent;
 
+                context.Response.Close();
+                return;
+            }
+
+            if (context.Request.Url?.AbsolutePath == "/control")
+            {
+                if (context.Request.HttpMethod == "GET")
+                {
+                    context.Response.ContentType = "application/json";
+                    var paused = File.Exists(PausePath);
+                    var registeredDevice = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
+                    await JsonSerializer.SerializeAsync(
+                        context.Response.OutputStream,
+                        new { paused, deviceId = registeredDevice?.DeviceId },
+                        cancellationToken: cancellationToken);
+                    context.Response.Close();
+                    return;
+                }
+
+                if (context.Request.HttpMethod == "POST")
+                {
+                    var command = await JsonSerializer.DeserializeAsync<SyncControlRequest>(
+                        context.Request.InputStream,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
+                        cancellationToken);
+
+                    if (command?.Paused is not bool pause)
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        context.Response.Close();
+                        return;
+                    }
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
+                    if (pause)
+                        await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                    else if (File.Exists(PausePath))
+                        File.Delete(PausePath);
+
+                    context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                    context.Response.Close();
+                    return;
+                }
+            }
+
+            if (context.Request.Url?.AbsolutePath == "/quiesce" &&
+                context.Request.HttpMethod == "POST")
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
+                await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                await _cancellation.StopAndWaitAsync(cancellationToken);
+                context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                context.Response.Close();
+                return;
+            }
+
+            if (context.Request.Url?.AbsolutePath == "/deactivate" &&
+                context.Request.HttpMethod == "POST")
+            {
+                // El servidor debe revocar primero la credencial. Esta operaci贸n
+                // solo borra el registro y token locales; nunca toca archivos.
+                Directory.CreateDirectory(Path.GetDirectoryName(PausePath)!);
+                await File.WriteAllTextAsync(PausePath, "paused", cancellationToken);
+                await _cancellation.StopAndWaitAsync(cancellationToken);
+                await _registrations.ClearRegistrationAsync(cancellationToken);
+                context.Response.StatusCode = (int)HttpStatusCode.NoContent;
                 context.Response.Close();
                 return;
             }
@@ -84,16 +176,6 @@ public sealed class ActivationListenerService : BackgroundService
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NotFound;
-
-                context.Response.Close();
-                return;
-            }
-
-            if (!IPAddress.IsLoopback(
-                    context.Request.RemoteEndPoint.Address))
-            {
-                context.Response.StatusCode =
-                    (int)HttpStatusCode.Forbidden;
 
                 context.Response.Close();
                 return;
@@ -129,9 +211,27 @@ public sealed class ActivationListenerService : BackgroundService
                 Token = request.Token
             };
 
+            if (request.StartFresh)
+            {
+                // El nuevo dispositivo nunca debe heredar selecciones del anterior.
+                // Bloquear el motor hasta que el usuario guarde una nueva selecci贸n.
+                Directory.CreateDirectory(SyncDirectory);
+                await File.WriteAllTextAsync(
+                    Path.Combine(SyncDirectory, "selection-pending.flag"),
+                    request.DeviceId.ToString(), cancellationToken);
+                await File.WriteAllTextAsync(
+                    Path.Combine(SyncDirectory, "selections.json"),
+                    "[]", cancellationToken);
+            }
+
             await _activationService.ActivateAsync(
                 device,
                 cancellationToken);
+
+            // Una activaci贸n nueva reanuda el motor sin reiniciar el servicio.
+            _cancellation.Reset();
+            if (File.Exists(PausePath))
+                File.Delete(PausePath);
 
             context.Response.StatusCode =
                 (int)HttpStatusCode.NoContent;
@@ -142,7 +242,7 @@ public sealed class ActivationListenerService : BackgroundService
         {
             _logger.LogError(
                 ex,
-                "Error procesando activaci髇 local.");
+                "Error procesando activaci贸n local.");
 
             if (context.Response.OutputStream.CanWrite)
             {
@@ -163,9 +263,10 @@ public sealed class ActivationListenerService : BackgroundService
             AllowedOrigin;
 
         response.Headers["Access-Control-Allow-Methods"] =
-            "POST, OPTIONS";
+            "GET, POST, OPTIONS";
 
         response.Headers["Access-Control-Allow-Headers"] =
             "Content-Type";
     }
 }
+public sealed record SyncControlRequest(bool? Paused);

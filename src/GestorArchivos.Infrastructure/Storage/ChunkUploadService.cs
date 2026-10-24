@@ -20,7 +20,7 @@ public sealed class ChunkUploadService : IChunkUploadService
     {
         if (string.IsNullOrWhiteSpace(options.Value.RootPath))
             throw new InvalidOperationException(
-                "Storage:RootPath no est· configurado.");
+                "Storage:RootPath no est√° configurado.");
 
         _rootPath = Path.GetFullPath(options.Value.RootPath);
         _lockManager = lockManager;
@@ -37,7 +37,7 @@ public sealed class ChunkUploadService : IChunkUploadService
         if (fileSize <= 0 || fileSize > MaxFileSize)
             throw new ArgumentOutOfRangeException(
                 nameof(fileSize),
-                "TamaÒo de archivo inv·lido.");
+                "Tama√±o de archivo inv√°lido.");
 
         var uploadId = Guid.NewGuid();
         var directory = GetUploadDirectory(uploadId);
@@ -105,7 +105,7 @@ public sealed class ChunkUploadService : IChunkUploadService
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(chunkIndex),
-                    "Õndice de fragmento inv·lido.");
+                    "√çndice de fragmento inv√°lido.");
             }
 
             var expectedLength = GetExpectedChunkLength(
@@ -116,7 +116,7 @@ public sealed class ChunkUploadService : IChunkUploadService
                 contentLength.Value != expectedLength)
             {
                 throw new InvalidDataException(
-                    "TamaÒo de fragmento inv·lido.");
+                    "Tama√±o de fragmento inv√°lido.");
             }
 
             var directory = GetUploadDirectory(uploadId);
@@ -124,11 +124,16 @@ public sealed class ChunkUploadService : IChunkUploadService
 
             if (File.Exists(chunkPath))
             {
-                if (new FileInfo(chunkPath).Length == expectedLength)
-                    return;
+                if (new FileInfo(chunkPath).Length != expectedLength)
+                    throw new InvalidDataException(
+                        "Existe un fragmento inv√°lido con ese √≠ndice.");
 
-                throw new InvalidDataException(
-                    "Existe un fragmento inv·lido con ese Ìndice.");
+                await using var storedStream = File.OpenRead(chunkPath);
+                var storedHash = await SHA256.HashDataAsync(storedStream, cancellationToken);
+                var incomingHash = await SHA256.HashDataAsync(content, cancellationToken);
+                if (!CryptographicOperations.FixedTimeEquals(storedHash, incomingHash))
+                    throw new InvalidDataException("El contenido del fragmento no coincide.");
+                return;
             }
 
             var tempPath =
@@ -162,7 +167,7 @@ public sealed class ChunkUploadService : IChunkUploadService
 
                         if (bytesWritten > expectedLength)
                             throw new InvalidDataException(
-                                "El fragmento supera el tamaÒo esperado.");
+                                "El fragmento supera el tama√±o esperado.");
 
                         await output.WriteAsync(
                             buffer.AsMemory(0, read),
@@ -172,7 +177,7 @@ public sealed class ChunkUploadService : IChunkUploadService
 
                 if (bytesWritten != expectedLength)
                     throw new InvalidDataException(
-                        "El fragmento est· incompleto.");
+                        "El fragmento est√° incompleto.");
 
                 File.Move(tempPath, chunkPath);
             }
@@ -276,7 +281,7 @@ public sealed class ChunkUploadService : IChunkUploadService
 
                 if (new FileInfo(chunkPath).Length != expectedLength)
                     throw new InvalidDataException(
-                        $"El fragmento {index} tiene un tamaÒo inv·lido.");
+                        $"El fragmento {index} tiene un tama√±o inv√°lido.");
             }
 
             var fileId = Guid.NewGuid();
@@ -350,7 +355,7 @@ public sealed class ChunkUploadService : IChunkUploadService
 
             if (assembledBytes != metadata.FileSize)
                 throw new InvalidDataException(
-                    "El tamaÒo ensamblado no coincide con el esperado.");
+                    "El tama√±o ensamblado no coincide con el esperado.");
 
             var hash = Convert.ToHexString(
                 sha256.GetHashAndReset());
@@ -423,7 +428,7 @@ public sealed class ChunkUploadService : IChunkUploadService
 
         if (metadata is null)
             throw new FileNotFoundException(
-                "La sesiÛn de carga no existe.");
+                "La sesi√≥n de carga no existe.");
 
         if (metadata.OwnerId != ownerId)
             throw new UnauthorizedAccessException();
@@ -469,7 +474,7 @@ public sealed class ChunkUploadService : IChunkUploadService
         DeleteDirectory(uploadId);
 
         throw new TimeoutException(
-            "La sesiÛn de carga ha expirado.");
+            "La sesi√≥n de carga ha expirado.");
     }
 
     private string GetUploadDirectory(Guid uploadId)
@@ -522,7 +527,7 @@ public sealed class ChunkUploadService : IChunkUploadService
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "Ruta de almacenamiento inv·lida.");
+                "Ruta de almacenamiento inv√°lida.");
         }
 
         return fullPath;

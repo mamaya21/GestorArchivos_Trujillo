@@ -9,17 +9,20 @@ public sealed class Worker : BackgroundService
     private readonly ISyncEngine _syncEngine;
     private readonly IActivationService _activationService;
     private readonly SyncLog _log;
+    private readonly SyncCancellationCoordinator _cancellation;
     private readonly ILogger<Worker> _logger;
 
     public Worker(
         ISyncEngine syncEngine,
         IActivationService activationService,
         SyncLog log,
+        SyncCancellationCoordinator cancellation,
         ILogger<Worker> logger)
     {
         _syncEngine = syncEngine;
         _activationService = activationService;
         _log = log;
+        _cancellation = cancellation;
         _logger = logger;
     }
 
@@ -30,23 +33,38 @@ public sealed class Worker : BackgroundService
 
         try
         {
-            if (!await _activationService.IsActivatedAsync(stoppingToken))
+            while (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogWarning(
-                    "Cliente Sync no activado. Se requiere registrar este dispositivo antes de iniciar la sincronización.");
+                if (!await _activationService.IsActivatedAsync(stoppingToken))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+                    continue;
+                }
 
-                return;
+                _cancellation.Reset();
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken, _cancellation.Token);
+                var running = _syncEngine.RunAsync(linked.Token);
+                _cancellation.Track(running);
+                try
+                {
+                    await running;
+                }
+                catch (OperationCanceledException)
+                    when (stoppingToken.IsCancellationRequested || linked.IsCancellationRequested)
+                {
+                }
+
+                if (!stoppingToken.IsCancellationRequested)
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
-
-            await _syncEngine.RunAsync(stoppingToken);
         }
-        catch (OperationCanceledException)
-            when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "ejecución del servicio");
+            _log.Error(ex, "ejecuciÃ³n del servicio");
             throw;
         }
         finally

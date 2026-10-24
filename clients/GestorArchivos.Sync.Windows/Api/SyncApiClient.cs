@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -59,7 +62,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<SyncChangesResponse>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "La API devolviÛ una respuesta Sync vacÌa.");
+                "La API devolvi√≥ una respuesta Sync vac√≠a.");
     }
 
     public async Task<IReadOnlyList<SyncItem>> GetItemsAsync(
@@ -85,7 +88,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<SyncSnapshot>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un snapshot vacÌo.");
+                "El servidor devolvi√≥ un snapshot vac√≠o.");
     }
 
     public async Task<SyncItem> RegisterItemAsync(
@@ -105,7 +108,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<SyncItem>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un elemento de sincronizaciÛn vacÌo.");
+                "El servidor devolvi√≥ un elemento de sincronizaci√≥n vac√≠o.");
     }
 
     public async Task UpdateItemPathAsync(
@@ -121,6 +124,34 @@ public sealed class SyncApiClient : ISyncApiClient
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
+    public async Task<bool> IsItemTrashedAsync(Guid syncItemId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync(
+            $"api/sync/items/{syncItemId}/trash-status", cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        return document.RootElement.GetProperty("trashed").GetBoolean();
+    }
+
+    public async Task DetachTrashedItemAsync(Guid syncItemId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PostAsync(
+            $"api/sync/items/{syncItemId}/detach-if-trashed", null, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task TrashSelectedFileAsync(Guid fileId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.DeleteAsync($"api/sync/files/{fileId}", cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task TrashSelectedFolderAsync(Guid folderId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.DeleteAsync($"api/sync/folders/{folderId}", cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     public async Task MoveRemoteFileToTrashAsync(
         Guid fileId,
         long expectedVersion,
@@ -131,6 +162,38 @@ public sealed class SyncApiClient : ISyncApiClient
             $"api/sync/files/{fileId}/trash",
             new { expectedVersion, expectedHash },
             cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task RenameRemoteFileAsync(
+        Guid fileId, string name,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync(
+            $"api/sync/files/{fileId}/rename",
+            new { name }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task MoveRemoteFileAsync(
+        Guid fileId, Guid destinationFolderId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync(
+            $"api/sync/files/{fileId}/move",
+            new { destinationFolderId }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task RenameRemoteFolderAsync(Guid folderId, string name, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync($"api/sync/folders/{folderId}/rename", new { name }, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
+    public async Task MoveRemoteFolderAsync(Guid folderId, Guid destinationFolderId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.PutAsJsonAsync($"api/sync/folders/{folderId}/move", new { destinationFolderId }, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
     }
 
@@ -151,7 +214,7 @@ public sealed class SyncApiClient : ISyncApiClient
     {
         if (parentFolderId == Guid.Empty)
             throw new ArgumentException(
-                "El identificador de la carpeta padre no es v·lido.",
+                "El identificador de la carpeta padre no es v√°lido.",
                 nameof(parentFolderId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(folderName);
@@ -166,7 +229,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFolder>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una carpeta remota vacÌa.");
+                "El servidor devolvi√≥ una carpeta remota vac√≠a.");
     }
 
     public async Task<RemoteFile> CreateRemoteFileAsync(
@@ -198,7 +261,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFile>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un archivo remoto vacÌo.");
+                "El servidor devolvi√≥ un archivo remoto vac√≠o.");
     }
 
     public async Task<RemoteFile> GetRemoteFileAsync(
@@ -213,7 +276,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFile>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ un archivo remoto vacÌo.");
+                "El servidor devolvi√≥ un archivo remoto vac√≠o.");
     }
 
     public async Task<RemoteFolder> GetRemoteFolderAsync(
@@ -228,7 +291,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<RemoteFolder>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una carpeta remota vacÌa.");
+                "El servidor devolvi√≥ una carpeta remota vac√≠a.");
     }
 
     public async Task<SyncDevice?> GetCurrentDeviceAsync(
@@ -262,7 +325,7 @@ public sealed class SyncApiClient : ISyncApiClient
     {
         if (parentFolderId == Guid.Empty)
             throw new ArgumentException(
-                "El identificador de la carpeta padre no es v·lido.",
+                "El identificador de la carpeta padre no es v√°lido.",
                 nameof(parentFolderId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(folderName);
@@ -278,7 +341,7 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<AtomicSyncFolderResult>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una respuesta de creaciÛn atÛmica vacÌa.");
+                "El servidor devolvi√≥ una respuesta de creaci√≥n at√≥mica vac√≠a.");
     }
 
     public async Task<AtomicSyncFileResult> CreateAtomicRemoteFileAsync(
@@ -291,11 +354,15 @@ public sealed class SyncApiClient : ISyncApiClient
     {
         if (folderId == Guid.Empty)
             throw new ArgumentException(
-                "Carpeta remota inv·lida.", nameof(folderId));
+                "Carpeta remota inv√°lida.", nameof(folderId));
 
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
         ArgumentException.ThrowIfNullOrWhiteSpace(localPath);
         ArgumentNullException.ThrowIfNull(content);
+
+        if (content.CanSeek && content.Length - content.Position > 64L * 1024 * 1024)
+            return await CreateResumableRemoteFileAsync(
+                folderId, fileName, localPath, content, cancellationToken);
 
         using var form = new MultipartFormDataContent();
         using var fileContent = new StreamContent(content);
@@ -317,8 +384,160 @@ public sealed class SyncApiClient : ISyncApiClient
         return await response.Content.ReadFromJsonAsync<AtomicSyncFileResult>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException(
-                "El servidor devolviÛ una respuesta de archivo atÛmico vacÌa.");
+                "El servidor devolvi√≥ una respuesta de archivo at√≥mico vac√≠a.");
     }
+
+    private async Task<AtomicSyncFileResult> CreateResumableRemoteFileAsync(
+        Guid folderId, string fileName, string localPath, Stream content,
+        CancellationToken cancellationToken)
+    {
+        var start = content.Position;
+        var size = content.Length - start;
+        var hash = Convert.ToHexString(
+            await SHA256.HashDataAsync(content, cancellationToken));
+        content.Position = start;
+
+        var checkpointRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GestorArchivos", "Sync", "uploads");
+        Directory.CreateDirectory(checkpointRoot);
+        var key = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(_httpClient.BaseAddress + "|" + folderId + "|" + localPath)));
+        var checkpointPath = Path.Combine(checkpointRoot, key + ".json");
+
+        ResumableCheckpoint? checkpoint = null;
+        if (File.Exists(checkpointPath))
+        {
+            try
+            {
+                checkpoint = JsonSerializer.Deserialize<ResumableCheckpoint>(
+                    await File.ReadAllTextAsync(checkpointPath, cancellationToken));
+            }
+            catch (JsonException)
+            {
+                checkpoint = null;
+            }
+        }
+
+        if (checkpoint is not null &&
+            (checkpoint.FileSize != size || checkpoint.Hash != hash ||
+             checkpoint.FileName != fileName))
+        {
+            using var cancelled = await _httpClient.DeleteAsync(
+                $"api/sync/uploads/{checkpoint.UploadId}", cancellationToken);
+            if (cancelled.StatusCode != HttpStatusCode.NotFound)
+                await EnsureSuccessAsync(cancelled, cancellationToken);
+            File.Delete(checkpointPath);
+            checkpoint = null;
+        }
+
+        ResumableStatus? status = null;
+        if (checkpoint is not null)
+        {
+            using var lookup = await _httpClient.GetAsync(
+                $"api/sync/uploads/{checkpoint.UploadId}/status", cancellationToken);
+            if (lookup.StatusCode == HttpStatusCode.NotFound)
+            {
+                // The server removes the session after committing. If the final
+                // HTTP response was lost, replay through the atomic endpoint:
+                // it verifies the exact bytes before acknowledging the mapping.
+                // A changed remote file produces a conflict, never false success.
+                content.Position = start;
+                using var form = new MultipartFormDataContent();
+                using var fileContent = new StreamContent(content);
+                fileContent.Headers.ContentType =
+                    new MediaTypeHeaderValue("application/octet-stream");
+                form.Add(fileContent, "file", fileName);
+                form.Add(new StringContent(folderId.ToString()), "folderId");
+                form.Add(new StringContent(localPath), "localPath");
+                using var replay = await _httpClient.PostAsync(
+                    "api/sync/files/atomic", form, cancellationToken);
+                await EnsureSuccessAsync(replay, cancellationToken);
+                var confirmed = await replay.Content.ReadFromJsonAsync<AtomicSyncFileResult>(
+                    cancellationToken: cancellationToken)
+                    ?? throw new InvalidOperationException("Confirmaci√≥n de recuperaci√≥n vac√≠a.");
+                File.Delete(checkpointPath);
+                return confirmed;
+            }
+            else
+            {
+                await EnsureSuccessAsync(lookup, cancellationToken);
+                status = await lookup.Content.ReadFromJsonAsync<ResumableStatus>(
+                    cancellationToken: cancellationToken);
+                if (status is null || status.FolderId != folderId ||
+                    status.FileSize != size || status.FileName != fileName)
+                {
+                    checkpoint = null;
+                    status = null;
+                }
+            }
+        }
+
+        if (checkpoint is null)
+        {
+            using var initialized = await _httpClient.PostAsJsonAsync(
+                "api/sync/uploads/initialize",
+                new { folderId, fileName, fileSize = size }, cancellationToken);
+            await EnsureSuccessAsync(initialized, cancellationToken);
+            var session = await initialized.Content.ReadFromJsonAsync<ResumableSession>(
+                cancellationToken: cancellationToken)
+                ?? throw new InvalidOperationException("Sesi√≥n de carga vac√≠a.");
+            checkpoint = new ResumableCheckpoint(session.UploadId, size, hash, fileName);
+            await File.WriteAllTextAsync(checkpointPath,
+                JsonSerializer.Serialize(checkpoint), cancellationToken);
+            status = new ResumableStatus(folderId, fileName, size,
+                session.ChunkSize, session.ExpectedChunkCount, Array.Empty<int>());
+        }
+
+        if (status is null || status.ChunkSize <= 0 ||
+            status.ChunkSize > 64 * 1024 * 1024)
+            throw new InvalidOperationException("Estado de carga inv√°lido.");
+
+        var received = status.ReceivedChunks.ToHashSet();
+        var buffer = new byte[status.ChunkSize];
+        for (var index = 0; index < status.ExpectedChunkCount; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (received.Contains(index))
+                continue;
+
+            var offset = (long)index * status.ChunkSize;
+            var length = (int)Math.Min(status.ChunkSize, size - offset);
+            content.Position = start + offset;
+            await content.ReadExactlyAsync(buffer.AsMemory(0, length), cancellationToken);
+            using var payload = new ByteArrayContent(buffer, 0, length);
+            using var uploaded = await _httpClient.PutAsync(
+                $"api/sync/uploads/{checkpoint.UploadId}/chunks/{index}",
+                payload, cancellationToken);
+            await EnsureSuccessAsync(uploaded, cancellationToken);
+        }
+
+        content.Position = start;
+        var finalHash = Convert.ToHexString(
+            await SHA256.HashDataAsync(content, cancellationToken));
+        if (!string.Equals(finalHash, hash, StringComparison.Ordinal))
+            throw new IOException("El archivo local cambi√≥ durante la transferencia.");
+
+        using var completed = await _httpClient.PostAsJsonAsync(
+            $"api/sync/files/atomic/uploads/{checkpoint.UploadId}/complete",
+            new { localPath }, cancellationToken);
+        await EnsureSuccessAsync(completed, cancellationToken);
+        var result = await completed.Content.ReadFromJsonAsync<AtomicSyncFileResult>(
+            cancellationToken: cancellationToken)
+            ?? throw new InvalidOperationException("Confirmaci√≥n de carga vac√≠a.");
+        File.Delete(checkpointPath);
+        return result;
+    }
+
+    private sealed record ResumableCheckpoint(
+        Guid UploadId, long FileSize, string Hash, string FileName);
+
+    private sealed record ResumableSession(
+        Guid UploadId, int ChunkSize, int ExpectedChunkCount);
+
+    private sealed record ResumableStatus(
+        Guid FolderId, string FileName, long FileSize,
+        int ChunkSize, int ExpectedChunkCount, int[] ReceivedChunks);
 
     private static async Task EnsureSuccessAsync(
         HttpResponseMessage response,
