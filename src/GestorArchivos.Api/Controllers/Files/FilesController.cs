@@ -48,7 +48,7 @@ public class FilesController : ControllerBase
                 on item.DispositivoId equals device.Id
             join file in _dbContext.Archivos.AsNoTracking()
                 on item.ArchivoRemotoId equals file.Id
-            where item.Activo && item.Tipo == TipoElementoSync.Archivo &&
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Archivo &&
                   file.Id == fileId && file.CarpetaId == device.CarpetaRaizId
             select item.Id
         ).AnyAsync(cancellationToken);
