@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
@@ -21,6 +22,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ExplorerItem> _items = [];
     private readonly Stack<Guid?> _history = new();
     private Guid? _folderId;
+    private string _folderStatus = "Listo para trabajar";
 
     public MainWindow()
     {
@@ -61,9 +63,18 @@ public partial class MainWindow : Window
         {
             var details = await response.Content.ReadAsStringAsync();
             response.Dispose();
-            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {details[..Math.Min(details.Length, 240)]}");
+            throw new HttpRequestException($"HTTP {(int)response.StatusCode}: {details[..Math.Min(details.Length, 240)]}", null, response.StatusCode);
         }
         return response;
+    }
+
+    private void Login_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && LoginButton.IsEnabled)
+        {
+            e.Handled = true;
+            Login_Click(LoginButton, new RoutedEventArgs());
+        }
     }
 
     private async void Login_Click(object sender, RoutedEventArgs e)
@@ -83,7 +94,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            LoginError.Text = "No se pudo iniciar sesión. " + ex.Message;
+            LoginError.Text = ex is HttpRequestException { StatusCode: HttpStatusCode.Unauthorized }
+                ? "Usuario o contraseña incorrectos. Inténtalo nuevamente."
+                : ex is HttpRequestException { StatusCode: HttpStatusCode.Forbidden }
+                    ? "Tu cuenta no tiene permiso para acceder. Contacta al administrador."
+                    : ex is HttpRequestException or TaskCanceledException
+                        ? "No pudimos conectar con el servidor. Verifica tu conexión e inténtalo nuevamente."
+                        : "No fue posible iniciar sesión. Inténtalo nuevamente.";
         }
         finally { LoginButton.IsEnabled = true; }
     }
@@ -109,7 +126,8 @@ public partial class MainWindow : Window
                     file.GetProperty("tamanoBytes").GetInt64(),
                     file.GetProperty("version").GetInt32()));
             _folderId = folderId;
-            StatusText.Text = $"{_items.Count} elementos";
+            _folderStatus = $"{_items.Count} elementos";
+            StatusText.Text = _folderStatus;
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -154,8 +172,12 @@ public partial class MainWindow : Window
             await using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
                 await response.Content.CopyToAsync(file);
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            StatusText.Text = "Abierto en Windows: " + item.Name +
-                ". Esta versión aún no guarda cambios automáticamente en el servidor.";
+            StatusText.Text = "Archivo enviado a Windows: " + item.Name +
+                ". Los cambios locales aún no se guardan automáticamente en el servidor.";
+            // No se puede inferir el cierre real del documento a partir de Process.Start:
+            // algunas aplicaciones reutilizan procesos ya abiertos.
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            StatusText.Text = _folderStatus;
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -253,5 +275,26 @@ public partial class MainWindow : Window
     {
         public string Kind => IsFolder ? "Carpeta" : "Archivo";
         public string SizeText => IsFolder ? "" : Size.ToString("N0") + " bytes";
+        public string VersionText => IsFolder ? "" : Version.ToString();
+        public string Icon
+        {
+            get
+            {
+                if (IsFolder) return "📁";
+                var extension = Path.GetExtension(Name).ToLowerInvariant();
+                return extension switch
+                {
+                    ".pdf" => "📕",
+                    ".doc" or ".docx" or ".rtf" => "📘",
+                    ".xls" or ".xlsx" or ".csv" => "📗",
+                    ".ppt" or ".pptx" => "📙",
+                    ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" => "🖼️",
+                    ".zip" or ".rar" or ".7z" => "🗜️",
+                    ".mp4" or ".mov" or ".avi" => "🎬",
+                    ".mp3" or ".wav" => "🎵",
+                    _ => "📄"
+                };
+            }
+        }
     }
 }
