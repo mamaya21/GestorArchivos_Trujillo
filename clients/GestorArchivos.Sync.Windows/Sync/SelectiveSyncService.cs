@@ -2615,6 +2615,11 @@ public sealed class SelectiveSyncService
         if (string.IsNullOrWhiteSpace(name))
             return false;
 
+        // Archivos de bloqueo de Microsoft Office: no son documentos de usuario.
+        // Excel/Word pueden mantenerlos abiertos con acceso exclusivo.
+        if (name.StartsWith("~$", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         const string prefix = ".gestor-sync-";
         if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             return false;
