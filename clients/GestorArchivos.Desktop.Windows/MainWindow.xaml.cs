@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Windows.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -22,12 +24,18 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<ExplorerItem> _items = [];
     private readonly Stack<Guid?> _history = new();
     private Guid? _folderId;
+    private readonly Stack<string> _folderNames = new();
+    private ICollectionView? _itemsView;
     private string _folderStatus = "Listo para trabajar";
 
     public MainWindow()
     {
         InitializeComponent();
-        ItemsList.ItemsSource = _items;
+        _itemsView = CollectionViewSource.GetDefaultView(_items);
+        _itemsView.Filter = item => item is ExplorerItem file &&
+            (string.IsNullOrWhiteSpace(SearchBox.Text) ||
+             file.Name.Contains(SearchBox.Text.Trim(), StringComparison.CurrentCultureIgnoreCase));
+        ItemsList.ItemsSource = _itemsView;
         Loaded += OnLoaded;
         Closed += (_, _) => _http.Dispose();
     }
@@ -126,6 +134,8 @@ public partial class MainWindow : Window
                     file.GetProperty("tamanoBytes").GetInt64(),
                     file.GetProperty("version").GetInt32()));
             _folderId = folderId;
+            BreadcrumbText.Text = _folderNames.Count == 0 ? "Inicio" :
+                "Inicio  /  " + string.Join("  /  ", _folderNames.Reverse());
             _folderStatus = $"{_items.Count} elementos";
             StatusText.Text = _folderStatus;
         }
@@ -136,12 +146,16 @@ public partial class MainWindow : Window
     private async void Home_Click(object sender, RoutedEventArgs e)
     {
         _history.Clear();
+        _folderNames.Clear();
         await LoadFolderAsync(null);
     }
     private async void Back_Click(object sender, RoutedEventArgs e)
     {
         if (_history.Count > 0)
+        {
+            if (_folderNames.Count > 0) _folderNames.Pop();
             await LoadFolderAsync(_history.Pop());
+        }
     }
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await LoadFolderAsync(_folderId);
 
@@ -152,6 +166,7 @@ public partial class MainWindow : Window
         if (item.IsFolder)
         {
             _history.Push(_folderId);
+            _folderNames.Push(item.Name);
             await LoadFolderAsync(item.Id);
             return;
         }
@@ -178,6 +193,32 @@ public partial class MainWindow : Window
             // algunas aplicaciones reutilizan procesos ya abiertos.
             await Task.Delay(TimeSpan.FromSeconds(5));
             StatusText.Text = _folderStatus;
+        }
+        catch (Exception ex) { ShowError(ex); }
+    }
+
+    private void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        _itemsView?.Refresh();
+    }
+
+    private async void NewFile_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_folderId.HasValue)
+        {
+            MessageBox.Show("Selecciona primero una carpeta.", "Nuevo archivo");
+            return;
+        }
+        var name = Microsoft.VisualBasic.Interaction.InputBox(
+            "Nombre del archivo de texto:", "Nuevo archivo", "Nuevo archivo.txt").Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        if (!name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase))
+            name += ".txt";
+        try
+        {
+            using var response = await SendAsync(HttpMethod.Post, "files/empty",
+                new { name, folderId = _folderId.Value });
+            await LoadFolderAsync(_folderId);
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -264,6 +305,8 @@ public partial class MainWindow : Window
         _items.Clear();
         _folderId = null;
         _history.Clear();
+        _folderNames.Clear();
+        SearchBox.Clear();
         UserLabel.Text = "";
         ExplorerPanel.Visibility = Visibility.Collapsed;
         LoginPanel.Visibility = Visibility.Visible;
