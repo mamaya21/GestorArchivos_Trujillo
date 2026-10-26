@@ -187,7 +187,12 @@ public partial class MainWindow : Window
             if (_editSessions.TryGetValue(item.Id, out var existing))
             {
                 existing.CheckForChanges();
-                StatusText.Text = "La edición de " + item.Name + " sigue supervisada.";
+                var activePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "GestorArchivos", "Desktop", "Cache", item.Id.ToString("N"),
+                    Path.GetFileName(item.Name));
+                Process.Start(new ProcessStartInfo(activePath) { UseShellExecute = true });
+                StatusText.Text = "Archivo abierto y supervisado.";
                 return;
             }
 
