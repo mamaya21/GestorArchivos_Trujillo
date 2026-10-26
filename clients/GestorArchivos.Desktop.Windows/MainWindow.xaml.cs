@@ -199,12 +199,14 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, Path.GetFileName(item.Name));
 
-            // Nunca sobrescribir una copia local que pueda contener cambios sin enviar.
-            if (File.Exists(path))
-            {
-                StatusText.Text = "Existe una copia local previa. Se abrirá sin reemplazarla.";
-            }
-            else
+            // Obtener la huella actual del servidor antes de reutilizar una copia previa.
+            using var metadataResponse = await SendAsync(HttpMethod.Get, $"files/{item.Id}");
+            using var metadata = await JsonDocument.ParseAsync(
+                await metadataResponse.Content.ReadAsStreamAsync());
+            var serverHash = metadata.RootElement.GetProperty("hashSha256").GetString() ?? "";
+            var serverVersion = metadata.RootElement.GetProperty("version").GetInt32();
+
+            if (!File.Exists(path))
             {
                 await using var file = new FileStream(path, FileMode.CreateNew,
                     FileAccess.Write, FileShare.None);
@@ -216,7 +218,18 @@ public partial class MainWindow : Window
                 FileShare.ReadWrite | FileShare.Delete))
                 hash = Convert.ToHexString(await SHA256.HashDataAsync(file));
 
-            var session = new DesktopEditSession(_http, item.Id, path, item.Version,
+            if (!string.Equals(hash, serverHash, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(
+                    "Existe una copia local diferente de la versión del servidor. " +
+                    "Para evitar perder cambios, no se sobrescribirá ni se abrirá automáticamente. " +
+                    "Revisa la copia en: " + path,
+                    "Copia local pendiente de revisión",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var session = new DesktopEditSession(_http, item.Id, path, serverVersion,
                 hash, message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
             _editSessions[item.Id] = session;
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
