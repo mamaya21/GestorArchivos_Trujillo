@@ -187,56 +187,112 @@ public partial class MainWindow : Window
             if (_editSessions.TryGetValue(item.Id, out var existing))
             {
                 existing.CheckForChanges();
-                StatusText.Text = "La sesión de edición ya está activa para " + item.Name;
+                StatusText.Text = "La edición de " + item.Name + " sigue supervisada.";
                 return;
             }
 
             StatusText.Text = "Preparando " + item.Name + "...";
-            using var response = await SendAsync(HttpMethod.Get, $"files/{item.Id}/download");
             var directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "GestorArchivos", "Desktop", "Cache", item.Id.ToString("N"));
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, Path.GetFileName(item.Name));
 
-            // Obtener la huella actual del servidor antes de reutilizar una copia previa.
             using var metadataResponse = await SendAsync(HttpMethod.Get, $"files/{item.Id}");
             using var metadata = await JsonDocument.ParseAsync(
                 await metadataResponse.Content.ReadAsStreamAsync());
             var serverHash = metadata.RootElement.GetProperty("hashSha256").GetString() ?? "";
             var serverVersion = metadata.RootElement.GetProperty("version").GetInt32();
 
-            if (!File.Exists(path))
+            string? localHash = null;
+            if (File.Exists(path))
             {
-                await using var file = new FileStream(path, FileMode.CreateNew,
-                    FileAccess.Write, FileShare.None);
-                await response.Content.CopyToAsync(file);
+                await using var local = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                localHash = Convert.ToHexString(await SHA256.HashDataAsync(local));
             }
 
-            string hash;
-            await using (var file = new FileStream(path, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete))
-                hash = Convert.ToHexString(await SHA256.HashDataAsync(file));
-
-            if (!string.Equals(hash, serverHash, StringComparison.OrdinalIgnoreCase))
+            if (localHash is not null &&
+                !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show(
-                    "Existe una copia local diferente de la versión del servidor. " +
-                    "Para evitar perder cambios, no se sobrescribirá ni se abrirá automáticamente. " +
-                    "Revisa la copia en: " + path,
-                    "Copia local pendiente de revisión",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                var choice = MessageBox.Show(
+                    "La copia guardada en este equipo es diferente de la versión del servidor.\n\n" +
+                    "Sí: continuar con mi copia local.\n" +
+                    "No: abrir la versión del servidor sin borrar mi copia local.\n" +
+                    "Cancelar: no abrir ningún archivo.\n\n" +
+                    "Tus cambios locales se conservarán en todos los casos.",
+                    "Selecciona qué versión abrir",
+                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question,
+                    MessageBoxResult.Cancel);
+
+                if (choice == MessageBoxResult.Cancel)
+                {
+                    StatusText.Text = _folderStatus;
+                    return;
+                }
+
+                if (choice == MessageBoxResult.No)
+                {
+                    var serverCopy = Path.Combine(directory, "VersionServidor",
+                        Path.GetFileName(item.Name));
+                    Directory.CreateDirectory(Path.GetDirectoryName(serverCopy)!);
+                    await DownloadServerCopyAsync(item.Id, serverCopy);
+                    Process.Start(new ProcessStartInfo(serverCopy) { UseShellExecute = true });
+                    StatusText.Text = "Versión del servidor abierta. Tu copia local permanece intacta.";
+                    return;
+                }
+
+                // No asumir que la copia local pertenece a la versión actual:
+                // se abre sin sincronización automática para impedir sobrescrituras.
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                StatusText.Text = "Copia local abierta. Se conserva sin sobrescribir la versión del servidor.";
                 return;
             }
 
+            if (localHash is null)
+            {
+                await DownloadServerCopyAsync(item.Id, path);
+                await using var local = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                localHash = Convert.ToHexString(await SHA256.HashDataAsync(local));
+                if (!string.IsNullOrEmpty(serverHash) &&
+                    !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("La descarga no coincide con el archivo del servidor.");
+            }
+
             var session = new DesktopEditSession(_http, item.Id, path, serverVersion,
-                hash, message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
+                localHash, message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
             _editSessions[item.Id] = session;
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            StatusText.Text = "Editando " + item.Name +
-                ". Los cambios guardados se enviarán al servidor automáticamente.";
+            try
+            {
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch
+            {
+                _editSessions.Remove(item.Id);
+                session.Dispose();
+                throw;
+            }
+            StatusText.Text = "Archivo abierto. Los cambios guardados se enviarán automáticamente.";
         }
         catch (Exception ex) { ShowError(ex); }
+    }
+
+    private async Task DownloadServerCopyAsync(Guid fileId, string destination)
+    {
+        using var response = await SendAsync(HttpMethod.Get, $"files/{fileId}/download");
+        var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var file = new FileStream(temporary, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None))
+                await response.Content.CopyToAsync(file);
+            File.Move(temporary, destination, true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
     }
 
     private void SearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
