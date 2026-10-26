@@ -1,45 +1,42 @@
-# Gestor Archivos — coverage and validation ledger
+# Gestor Archivos — matriz de cobertura (26-oct-2026)
 
-This file is the source of truth for regression scope. Never mark a scenario automated unless a runnable test asserts its result. A user-confirmed manual pass is distinct from an automated pass.
+Criterios: **Validado** = prueba automatizada ejecutada satisfactoriamente o comprobación manual confirmada; **Parcial** = implementación identificada sin cobertura integral; **Pendiente** = falta evidencia de validación. No equiparar compilación con comportamiento funcional.
 
-## Previously confirmed manually
+## Validaciones confirmadas
 
-- Web: download files and folders; copy, move, cut/paste and delete multiple files/folders
-- Web trash: multi-select, restore, permanent deletion
-- Windows sync: bidirectional sync; pause/resume; local-to-web file/folder moves and renames (including empty folders and nested structures)
-- Windows sync: local folder deletion to web trash, including empty folder after re-registering the device while keeping remote data
-- Windows sync: web-to-local folder moves and renames
-
-## Existing automated tests
-
-- `tests/GestorArchivos.IntegrationTests`: API, sync and orphan cleanup test classes; requires isolated SQL Server Express (`.\\SQLEXPRESS`), see factory source.
-- CI: .NET solution build, frontend TypeScript/Vite build, frontend lint. These are quality gates, **not** proof of functional behavior.
-
-## New automated security regressions (pending execution)
-
-- `AnonymousSecurityRegressionTests.cs`: 19 anonymous protected reads, 6 anonymous writes, and 19 invalid-bearer reads (44 cases). Requires isolated SQL Express. Tests are committed but **not yet executed**.
-
-- `FolderPermissionRegressionTests.cs`: API test for user/group ACLs, inheritance, effective permissions, edit/revoke, invalid flags and forbidden writes. **Not yet executed**.
-
-## Remaining coverage to implement
-
-| Area | Required automated assertions | Status |
+| Área | Estado | Evidencia / límite |
 | --- | --- | --- |
-| Permissions | User/group grants, inheritance, effective permissions, edit/revoke, forbidden API writes | Test implemented; execution pending |
-| Disconnection/recovery | Offline edits, reconnect, restart with pending changes, idempotence | Not automated |
-| Conflicts/version history | Both changes retained, conflict handling, version list and restore | Not automated |
-| Transfers | 4 GB upload/download, SHA-256, interrupted upload/download, resume semantics | Not automated |
-| Windows Explorer | Open file using associated application, double click, mount/shell integration | Not automated |
-| Local agent security | Origin validation, hostile localhost requests, activation/pause/deactivation auth, secrets storage | Not automated |
-| Browser UX | Navigation, bulk actions, trash and permissions via Playwright | Not automated |
+| API e integración, ACL de usuario y grupo, herencia, revocación, escrituras denegadas, operaciones Sync, aislamiento entre dispositivos | **Validado (automatizado)** | Usuario ejecutó el 26-oct-2026 la batería completa de `GestorArchivos.IntegrationTests`: **134 aprobadas, 0 errores, 0 omitidas**. No implica cobertura exhaustiva de toda la aplicación. |
+| Web: descarga de archivos/carpetas, copia, movimiento, cortar/pegar y eliminación masiva | **Validado (manual)** | Usuario confirmó estas operaciones. |
+| Papelera web: selección múltiple, restauración y eliminación definitiva | **Validado (manual)** | Usuario confirmó funcionalidad. |
+| Sync Windows: sincronización bidireccional, pausa/reanudación, movimientos y renombres de archivos/carpetas, carpetas vacías, papelera remota | **Validado (manual, escenarios anteriores)** | Confirmaciones del usuario; no constituye certificación de resiliencia ni seguridad del cliente. |
+| Persistencia local del checkpoint Sync tras reinicio, guardados consecutivos e interrupción | **Implementado (automatizado; ejecución no confirmada)** | Cinco pruebas en `tests/GestorArchivos.Sync.Windows.Tests/LocalStateRestartTests.cs`. No incluidas en el resultado de 134 pruebas de integración. |
 
-## How to run
+## Brechas reales, por prioridad
 
-`powershell -ExecutionPolicy Bypass -File .\scripts\Test-GestorArchivos.ps1`
+| Prioridad | Área | Estado | Trabajo para cerrar |
+| --- | --- | --- | --- |
+| P0 | Agente local Windows: HttpListener, Origin, endpoints de activación/pausa/desactivación/control, tokens y almacenamiento de secretos | **Pendiente** | Auditoría de límites de confianza y pruebas hostiles desde localhost; corregir vulnerabilidades verificadas. |
+| P0 | Reconexión Windows, fallos de proceso, cola pendiente y conflictos simultáneos | **Parcial** | Ejecutar pruebas de reinicio real y pérdida de red, verificar no pérdida de datos, reintentos idempotentes y conflictos. Existen `SyncReconnectRegressionTests`, `Test-SyncCrashResume.ps1` y `Test-RealWindowsSyncCrashResume.ps1`; revisar su alcance antes de añadir escenarios. |
+| P1 | Integración Explorador Windows / aplicación asociada / doble clic | **Pendiente** | Validación de extremo a extremo con cliente instalado, sin inferir que el código por sí solo prueba integración shell. |
+| P1 | Web: navegación, drag & drop, vista previa, doble clic, permisos y operaciones masivas | **Parcial** | Añadir pruebas E2E con navegador (no hay Playwright configurado en `frontend/package.json`); evitar repetir casos manuales aprobados salvo regresión. |
+| P1 | Transferencias masivas: 4 GB, corte/reanudación, SHA-256, límites y memoria | **Parcial** | Probar con datos descartables; `scripts/Test-GestorArchivos.ps1 -LargeTransferTests` actualmente indica explícitamente que no está implementado. Ya hubo prueba manual satisfactoria de reanudación de 256 MB. |
+| P1 | Historial de versiones, restauración y resolución de conflictos | **Pendiente de cobertura integral** | Verificar persistencia de ambas versiones, recuperación, consistencia de hash y concurrencia. |
+| P2 | Administración: usuarios, grupos, auditoría y permisos en UI | **Parcial** | Las páginas existen; las ACL API están validadas, pero falta E2E de interfaz y permisos efectivos visibles. |
+| P2 | Rendimiento y escalabilidad | **Pendiente** | Medir miles de elementos, árboles profundos, operaciones concurrentes y uso de recursos. |
+| P2 | Operación y despliegue | **Parcial** | Verificar instalación, actualización, respaldo/restauración, recuperación y monitoreo. CI actual compila .NET, frontend y lint; no ejecuta pruebas SQL por depender de SQLEXPRESS. |
 
-On a dedicated Windows test host with a **verified isolated** SQL Express instance and test database, explicitly opt in:
+## Plan de ejecución agrupada
 
-`$env:GESTOR_TEST_SQL_ISOLATED='1'`
-`powershell -ExecutionPolicy Bypass -File .\scripts\Test-GestorArchivos.ps1 -IntegrationTests`
+1. **Bloque A — Seguridad y resiliencia Windows (P0):** auditar agente y credenciales, cubrir reinicio/reconexión/operaciones pendientes y corregir fallos confirmados; un único ciclo de validación por bloque.
+2. **Bloque B — Experiencia completa (P1):** pruebas E2E web + cliente Windows + operaciones de interfaz que no estén ya cubiertas.
+3. **Bloque C — Integridad y volumen (P1):** conflictos, historial, restauración, transferencias grandes y concurrencia.
+4. **Bloque D — Administración y producción (P2):** controles administrativos, rendimiento, despliegue, respaldo y recuperación.
 
-Never point test configuration at production storage, credentials, or databases. Large-transfer testing must use generated disposable data only. Do not claim these pending suites pass until they exist and run successfully.
+## Comandos y restricciones
+
+- Batería API confirmada: `$env:GESTOR_TEST_ALLOW_SHARED_INSTANCE="1"; dotnet test .\tests\GestorArchivos.IntegrationTests\GestorArchivos.IntegrationTests.csproj -c Release --no-restore`.
+- El resultado de **134** solo corresponde a ese proyecto de integración, no a todas las pruebas de la solución.
+- `scripts/Test-GestorArchivos.ps1` aún exige `GESTOR_TEST_SQL_ISOLATED=1` para su opción `-IntegrationTests`; revisar y armonizar con la fábrica actual antes de usarlo como lanzador único.
+- No usar base de datos, credenciales ni archivos productivos para pruebas destructivas. Mantener la base temporal de integración y datos de prueba desechables.
+- Una validación aprobada no se repite salvo cambios que afecten su comportamiento.
