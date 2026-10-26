@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Security.Cryptography;
+using GestorArchivos.Desktop.Windows.Services;
 using System.ComponentModel;
 using System.Windows.Data;
 using System.Diagnostics;
@@ -23,6 +25,7 @@ public partial class MainWindow : Window
     });
     private readonly ObservableCollection<ExplorerItem> _items = [];
     private readonly Stack<Guid?> _history = new();
+    private readonly Dictionary<Guid, DesktopEditSession> _editSessions = new();
     private Guid? _folderId;
     private readonly Stack<string> _folderNames = new();
     private ICollectionView? _itemsView;
@@ -37,7 +40,11 @@ public partial class MainWindow : Window
              file.Name.Contains(SearchBox.Text.Trim(), StringComparison.CurrentCultureIgnoreCase));
         ItemsList.ItemsSource = _itemsView;
         Loaded += OnLoaded;
-        Closed += (_, _) => _http.Dispose();
+        Closed += (_, _) =>
+        {
+            foreach (var session in _editSessions.Values) session.Dispose();
+            _http.Dispose();
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -177,22 +184,44 @@ public partial class MainWindow : Window
     {
         try
         {
-            StatusText.Text = "Abriendo " + item.Name + "...";
+            if (_editSessions.TryGetValue(item.Id, out var existing))
+            {
+                existing.CheckForChanges();
+                StatusText.Text = "La sesión de edición ya está activa para " + item.Name;
+                return;
+            }
+
+            StatusText.Text = "Preparando " + item.Name + "...";
             using var response = await SendAsync(HttpMethod.Get, $"files/{item.Id}/download");
             var directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "GestorArchivos", "Desktop", "Cache", item.Id.ToString("N"));
             Directory.CreateDirectory(directory);
             var path = Path.Combine(directory, Path.GetFileName(item.Name));
-            await using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+
+            // Nunca sobrescribir una copia local que pueda contener cambios sin enviar.
+            if (File.Exists(path))
+            {
+                StatusText.Text = "Existe una copia local previa. Se abrirá sin reemplazarla.";
+            }
+            else
+            {
+                await using var file = new FileStream(path, FileMode.CreateNew,
+                    FileAccess.Write, FileShare.None);
                 await response.Content.CopyToAsync(file);
+            }
+
+            string hash;
+            await using (var file = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete))
+                hash = Convert.ToHexString(await SHA256.HashDataAsync(file));
+
+            var session = new DesktopEditSession(_http, item.Id, path, item.Version,
+                hash, message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
+            _editSessions[item.Id] = session;
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            StatusText.Text = "Archivo enviado a Windows: " + item.Name +
-                ". Los cambios locales aún no se guardan automáticamente en el servidor.";
-            // No se puede inferir el cierre real del documento a partir de Process.Start:
-            // algunas aplicaciones reutilizan procesos ya abiertos.
-            await Task.Delay(TimeSpan.FromSeconds(5));
-            StatusText.Text = _folderStatus;
+            StatusText.Text = "Editando " + item.Name +
+                ". Los cambios guardados se enviarán al servidor automáticamente.";
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -302,6 +331,8 @@ public partial class MainWindow : Window
     {
         try { using var response = await SendAsync(HttpMethod.Post, "auth/logout"); }
         catch (Exception ex) { ShowError(ex); }
+        foreach (var session in _editSessions.Values) session.Dispose();
+        _editSessions.Clear();
         _items.Clear();
         _folderId = null;
         _history.Clear();
