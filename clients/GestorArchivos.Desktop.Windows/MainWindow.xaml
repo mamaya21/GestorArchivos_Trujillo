@@ -1,0 +1,35 @@
+<Window x:Class="GestorArchivos.Desktop.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Gestor Archivos" Width="1280" Height="800" MinWidth="900" MinHeight="600"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#172A43" Padding="12,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Foreground="White" FontSize="15" FontWeight="SemiBold"
+                           VerticalAlignment="Center" Text="Gestor Archivos · Escritorio" />
+                <Button Grid.Column="1" Content="Recargar" Click="Reload_Click"
+                        Padding="16,6" MinWidth="90" />
+            </Grid>
+        </Border>
+        <Grid>
+            <wv2:WebView2 x:Name="Browser" NavigationCompleted="Browser_NavigationCompleted" />
+            <Border x:Name="ErrorPanel" Background="#F5F7FB" Visibility="Collapsed">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            MaxWidth="560">
+                    <TextBlock FontSize="22" FontWeight="Bold" Text="No se pudo conectar"
+                               HorizontalAlignment="Center" Margin="0,0,0,12" />
+                    <TextBlock x:Name="ErrorMessage" TextWrapping="Wrap" TextAlignment="Center"
+                               Margin="0,0,0,18" />
+                    <Button Content="Reintentar" Click="Reload_Click"
+                            Padding="20,8" HorizontalAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
