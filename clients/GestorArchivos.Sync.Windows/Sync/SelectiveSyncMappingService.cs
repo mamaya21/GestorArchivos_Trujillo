@@ -50,6 +50,52 @@ public sealed class SelectiveSyncMappingService
         return BuildMappings(selections, snapshot, items);
     }
 
+    // Desvincular asociaciones antiguas de la raíz que ya no están en el selector.
+    // Nunca borrar contenido remoto ni local: solo retirar la protección Sync.
+    public async Task ReconcileRemovedRootSelectionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(SelectionsPath))
+            return;
+
+        var json = await File.ReadAllTextAsync(SelectionsPath, cancellationToken);
+        var selections = JsonSerializer.Deserialize<List<SelectiveSyncSelection>>(
+            json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            ?? throw new InvalidOperationException("La configuración de selección no es válida.");
+
+        var selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var selection in selections)
+        {
+            if (selection is null || string.IsNullOrWhiteSpace(selection.Path) ||
+                !Path.IsPathFullyQualified(selection.Path) ||
+                (selection.Kind != 0 && selection.Kind != 1))
+                throw new InvalidOperationException("La configuración contiene una selección inválida.");
+            selectedPaths.Add(NormalizePath(selection.Path));
+        }
+
+        var snapshot = await _syncApiClient.GetSnapshotAsync(cancellationToken);
+        if (snapshot.RootFolderId == Guid.Empty)
+            throw new InvalidOperationException("La raíz de sincronización no está disponible.");
+
+        var items = await _syncApiClient.GetItemsAsync(cancellationToken);
+        foreach (var item in items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var isRootFolder = item.Tipo == SyncItemType.Folder &&
+                item.CarpetaRemotaId.HasValue && snapshot.Folders.Any(folder =>
+                    folder.Id == item.CarpetaRemotaId.Value &&
+                    folder.CarpetaPadreId == snapshot.RootFolderId);
+            var isRootFile = item.Tipo == SyncItemType.File &&
+                item.ArchivoRemotoId.HasValue && snapshot.Files.Any(file =>
+                    file.Id == item.ArchivoRemotoId.Value &&
+                    file.CarpetaId == snapshot.RootFolderId);
+
+            if ((isRootFolder || isRootFile) &&
+                !selectedPaths.Contains(NormalizePath(item.RutaLocal)))
+                await _syncApiClient.DeleteItemAsync(item.SyncItemId, cancellationToken);
+        }
+    }
+
     public async Task<IReadOnlyList<SelectiveSyncMapping>> PrepareMappingsAsync(
         CancellationToken cancellationToken = default)
     {
