@@ -91,26 +91,59 @@ public sealed class DesktopEditSession : IDisposable
     private async Task UploadIfChangedAsync(CancellationToken token)
     {
         if (!File.Exists(_path)) return;
-        await using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete, 1024 * 1024, FileOptions.Asynchronous);
-        using var sha = SHA256.Create();
-        var hash = Convert.ToHexString(await sha.ComputeHashAsync(stream, token));
-        if (hash == _lastHash) return;
-        stream.Position = 0;
-        using var form = new MultipartFormDataContent();
-        form.Add(new StringContent(_version.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-            "expectedVersion");
-        form.Add(new StreamContent(stream), "file", Path.GetFileName(_path));
-        using var request = new HttpRequestMessage(HttpMethod.Put,
-            $"api/files/{_fileId}/desktop-content") { Content = form };
-        using var response = await _http.SendAsync(request, token);
-        if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException("Error guardando el documento", null, response.StatusCode);
-        using var result = await JsonDocument.ParseAsync(
-            await response.Content.ReadAsStreamAsync(token), cancellationToken: token);
-        _version = result.RootElement.GetProperty("version").GetInt32();
-        _lastHash = hash;
-        _status("Cambios guardados en el servidor correctamente.");
+
+        // Congelar una instantánea para evitar subir contenido que cambia
+        // mientras Office guarda el archivo.
+        var before = new FileInfo(_path);
+        var originalLength = before.Length;
+        var originalWrite = before.LastWriteTimeUtc;
+        var snapshot = Path.Combine(Path.GetTempPath(),
+            "gestor-desktop-" + Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            await using (var source = new FileStream(_path, FileMode.Open,
+                FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+                1024 * 1024, FileOptions.Asynchronous))
+            await using (var copy = new FileStream(snapshot, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None, 1024 * 1024, FileOptions.Asynchronous))
+                await source.CopyToAsync(copy, token);
+
+            var after = new FileInfo(_path);
+            if (after.Length != originalLength ||
+                after.LastWriteTimeUtc != originalWrite)
+            {
+                Interlocked.Exchange(ref _pending, 1);
+                return;
+            }
+
+            await using var stream = new FileStream(snapshot, FileMode.Open,
+                FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.Asynchronous);
+            using var sha = SHA256.Create();
+            var hash = Convert.ToHexString(await sha.ComputeHashAsync(stream, token));
+            if (hash == _lastHash) return;
+            stream.Position = 0;
+
+            using var form = new MultipartFormDataContent();
+            form.Add(new StringContent(_version.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                "expectedVersion");
+            form.Add(new StreamContent(stream), "file", Path.GetFileName(_path));
+            using var request = new HttpRequestMessage(HttpMethod.Put,
+                $"api/files/{_fileId}/desktop-content") { Content = form };
+            using var response = await _http.SendAsync(request, token);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException("Error guardando el documento", null, response.StatusCode);
+
+            using var result = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(token), cancellationToken: token);
+            _version = result.RootElement.GetProperty("version").GetInt32();
+            _lastHash = hash;
+            _status("Cambios guardados en el servidor correctamente.");
+        }
+        finally
+        {
+            try { if (File.Exists(snapshot)) File.Delete(snapshot); }
+            catch (IOException) { }
+        }
     }
 
     public void Dispose()
