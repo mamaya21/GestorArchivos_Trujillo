@@ -71,7 +71,7 @@ public class FoldersController : ControllerBase
                 on item.DispositivoId equals device.Id
             join folder in _dbContext.Carpetas.AsNoTracking()
                 on item.CarpetaRemotaId equals folder.Id
-            where item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
                   folder.CarpetaPadreId == device.CarpetaRaizId
             select folder.Id
         ).ToListAsync(cancellationToken)).ToHashSet();
@@ -123,7 +123,7 @@ public class FoldersController : ControllerBase
                 on item.DispositivoId equals device.Id
             join file in _dbContext.Archivos.AsNoTracking()
                 on item.ArchivoRemotoId equals file.Id
-            where item.Activo && item.Tipo == TipoElementoSync.Archivo &&
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Archivo &&
                   file.CarpetaId == device.CarpetaRaizId
             select file.Id
         ).ToListAsync(cancellationToken)).ToHashSet();
@@ -464,7 +464,7 @@ public class FoldersController : ControllerBase
                 on item.DispositivoId equals device.Id
             join folder in _dbContext.Carpetas.AsNoTracking()
                 on item.CarpetaRemotaId equals folder.Id
-            where item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
                   folder.Id == folderId &&
                   folder.CarpetaPadreId == device.CarpetaRaizId
             select item.Id
