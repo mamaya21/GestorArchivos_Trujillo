@@ -163,6 +163,33 @@ public sealed class FolderPermissionRegressionTests
             await EnsureSuccess(download);
             Assert.Equal(originalContent, await download.Content.ReadAsStringAsync());
         }
+        // Revoked write permissions must block rename, move and delete.
+        var destinationFolder = await CreateId(admin, "/api/folders",
+            new { name = $"SyncDestination-{Guid.NewGuid():N}", parentId = syncRoot });
+
+        await Status(sync.PutAsJsonAsync(
+            $"/api/sync/files/{protectedFileId}/rename",
+            new { name = "unauthorized-rename.txt" }), HttpStatusCode.Forbidden);
+
+        await Status(sync.PutAsJsonAsync(
+            $"/api/sync/files/{protectedFileId}/move",
+            new { destinationFolderId = destinationFolder }), HttpStatusCode.Forbidden);
+
+        await Status(sync.DeleteAsync(
+            $"/api/sync/files/{protectedFileId}"), HttpStatusCode.Forbidden);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var unchanged = await db.Archivos.AsNoTracking()
+                .SingleAsync(x => x.Id == protectedFileId);
+            Assert.Equal("protected.txt", unchanged.Nombre);
+            Assert.Equal(syncRoot, unchanged.CarpetaId);
+            Assert.Equal(originalVersion, unchanged.Version);
+            Assert.Equal(originalHash, unchanged.HashSha256);
+            Assert.Equal(Encoding.UTF8.GetByteCount(originalContent), unchanged.TamanoBytes);
+            Assert.Equal(GestorArchivos.Domain.Enums.EstadoArchivo.Activo, unchanged.Estado);
+        }
         await Success(admin.DeleteAsync(syncPermissionRoute));
 
         // Removing inheritance removes the descendant grant, but not the parent's.
