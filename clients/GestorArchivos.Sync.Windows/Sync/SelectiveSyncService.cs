@@ -124,9 +124,12 @@ public sealed class SelectiveSyncService
         // While a root is missing, wait for the quarantine decision without
         // processing other selections. Do not mistake this for a sync failure.
         // In particular, do not advance the baseline or selection guard.
-        if (selections.Any(selection => selection.Kind == 1
-                ? !Directory.Exists(selection.Path)
-                : !File.Exists(selection.Path)))
+        // Keep missing roots quarantined without blocking healthy selections.
+        // Never interpret an absent selected root as a deletion.
+        selections = selections.Where(selection => selection.Kind == 1
+                ? Directory.Exists(selection.Path)
+                : File.Exists(selection.Path)).ToList();
+        if (selections.Count == 0)
             return;
 
         await CaptureFolderIdentitiesAsync(cancellationToken);
