@@ -1,17 +1,24 @@
-# GestorArchivos.Desktop.Windows
+# Gestor Archivos Desktop (WPF nativo)
 
-Cliente de escritorio Windows (WPF + WebView2) que reutiliza la aplicación web y su autenticación existente, sin duplicar la API ni los permisos.
+Cliente Windows sin WebView2 ni interfaz embebida. Reutiliza la API existente y el inicio de sesión por cookie de ASP.NET Core Identity.
 
-## Inicio local
+## Implementado en esta etapa
 
-1. Iniciar API y frontend con los comandos habituales del proyecto.
-2. Ejecutar `dotnet run --project clients/GestorArchivos.Desktop.Windows/GestorArchivos.Desktop.Windows.csproj` en Windows.
-3. Iniciar sesión dentro de la ventana Desktop con las credenciales habituales.
+- Login y cierre de sesión nativos.
+- Explorador de carpetas y archivos, navegación y actualización.
+- Crear y renombrar carpetas y archivos.
+- Selección múltiple para enviar elementos a la papelera.
+- Subir archivos y abrir archivos mediante su programa asociado en Windows.
 
-## Configuración
+## Limitaciones actuales
 
-Editar `desktopsettings.json` y establecer `ServerUrl` con la dirección HTTPS del servidor publicado. Solo se permite HTTP para localhost durante desarrollo. La configuración se copia al directorio de salida.
+- La apertura utiliza una copia local administrada. **No** implementa todavía subida automática de cambios, bloqueo distribuido, control de versiones de edición, portapapeles, papelera visual ni paridad completa con la web.
+- La subida actual utiliza el endpoint multipart; para archivos grandes se debe integrar el protocolo resumible existente.
+- Se requiere HTTPS para el servidor remoto. HTTP solo está permitido en localhost para desarrollo.
+- No se ha ejecutado compilación ni prueba funcional en Windows desde GitHub.
 
-## Alcance de esta primera base
+## Ejecución
 
-La ventana, autenticación, navegación y funcionalidades web se reutilizan mediante WebView2. **Todavía no se implementa** la edición nativa de archivos con caché, guardado de vuelta al servidor, bloqueos centralizados, ni instalador MSI. Esos componentes necesitan implementación y pruebas adicionales; no se deben considerar terminados.
+`dotnet run --project clients/GestorArchivos.Desktop.Windows/GestorArchivos.Desktop.Windows.csproj`
+
+Configure `desktopsettings.json` con la URL del servidor o del frontend local que redirige /api al backend.
