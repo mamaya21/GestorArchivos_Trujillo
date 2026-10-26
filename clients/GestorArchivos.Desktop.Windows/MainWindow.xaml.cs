@@ -233,6 +233,23 @@ public partial class MainWindow : Window
             }
 
             if (localHash is not null &&
+                !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase) &&
+                baseline is { } original &&
+                original.Version == serverVersion &&
+                string.Equals(original.Hash, serverHash, StringComparison.OrdinalIgnoreCase))
+            {
+                // Replay local edits only against the exact original server version.
+                var recovery = new DesktopEditSession(_http, item.Id, path,
+                    serverVersion, original.Hash,
+                    message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
+                _editSessions[item.Id] = recovery;
+                recovery.CheckForChanges();
+                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                StatusText.Text = "Archivo abierto. Enviando cambios locales pendientes.";
+                return;
+            }
+
+            if (localHash is not null &&
                 !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
             {
                 var choice = MessageBox.Show(
