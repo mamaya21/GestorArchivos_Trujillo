@@ -105,6 +105,85 @@ public sealed class FolderPermissionRegressionTests
             form.Add(new StringContent(syncRoot.ToString()), "folderId");
             await Status(sync.PostAsync("/api/sync/files", form), HttpStatusCode.Forbidden);
         }
+        // Batch: folder ACLs, inheritance, atomic writes, device isolation and conflicts.
+        await Status(sync.PostAsJsonAsync("/api/sync/folders",
+            new { parentFolderId = syncRoot, name = "blocked-folder" }),
+            HttpStatusCode.Forbidden);
+        await Status(sync.PostAsJsonAsync("/api/sync/folders/atomic",
+            new { parentFolderId = syncRoot, name = "blocked-atomic", localPath = "blocked-atomic" }),
+            HttpStatusCode.Forbidden);
+
+        await Success(admin.PutAsJsonAsync(syncPermissionRoute,
+            new { permissions = (int)PermisoCarpeta.ControlTotal, inheritToSubfolders = true }));
+
+        var protectedFolder = await CreateId(sync, "/api/sync/folders",
+            new { parentFolderId = syncRoot, name = "protected-folder" });
+        var moveDestination = await CreateId(sync, "/api/sync/folders",
+            new { parentFolderId = syncRoot, name = "folder-destination" });
+
+        // Duplicate names and invalid names must not create additional folders.
+        await Status(sync.PostAsJsonAsync("/api/sync/folders",
+            new { parentFolderId = syncRoot, name = "protected-folder" }),
+            HttpStatusCode.Conflict);
+        await Status(sync.PostAsJsonAsync("/api/sync/folders",
+            new { parentFolderId = syncRoot, name = "../invalid" }),
+            HttpStatusCode.BadRequest);
+
+        // Cyclic moves are rejected even with full permissions.
+        await Status(sync.PutAsJsonAsync(
+            $"/api/sync/folders/{protectedFolder}/move",
+            new { destinationFolderId = protectedFolder }),
+            HttpStatusCode.BadRequest);
+
+        await Success(admin.PutAsJsonAsync(syncPermissionRoute,
+            new { permissions = (int)PermisoCarpeta.Leer, inheritToSubfolders = true }));
+
+        await Status(sync.PostAsJsonAsync("/api/sync/folders",
+            new { parentFolderId = protectedFolder, name = "blocked-child" }),
+            HttpStatusCode.Forbidden);
+        await Status(sync.PutAsJsonAsync(
+            $"/api/sync/folders/{protectedFolder}/rename",
+            new { name = "unauthorized-folder-rename" }),
+            HttpStatusCode.Forbidden);
+        await Status(sync.PutAsJsonAsync(
+            $"/api/sync/folders/{protectedFolder}/move",
+            new { destinationFolderId = moveDestination }),
+            HttpStatusCode.Forbidden);
+        await Status(sync.DeleteAsync(
+            $"/api/sync/folders/{protectedFolder}"), HttpStatusCode.Forbidden);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var unchangedFolder = await db.Carpetas.AsNoTracking()
+                .SingleAsync(x => x.Id == protectedFolder);
+            Assert.Equal("protected-folder", unchangedFolder.Nombre);
+            Assert.Equal(syncRoot, unchangedFolder.CarpetaPadreId);
+            Assert.False(unchangedFolder.EnPapelera);
+        }
+
+        // A different device owned by the same user must not access this device's tree.
+        using var otherRegistration = await user.PostAsJsonAsync(
+            "/api/sync/devices/register",
+            new { name = $"Other-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await EnsureSuccess(otherRegistration);
+        using var otherJson = JsonDocument.Parse(
+            await otherRegistration.Content.ReadAsStringAsync());
+        var otherToken = otherJson.RootElement.GetProperty("token").GetString();
+        var otherRoot = otherJson.RootElement.GetProperty("rootFolderId").GetGuid();
+        Assert.NotEqual(syncRoot, otherRoot);
+        using var otherSync = Client();
+        otherSync.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", otherToken);
+        await Status(otherSync.GetAsync(
+            $"/api/sync/read/folders/{protectedFolder}"), HttpStatusCode.Forbidden);
+        await Status(otherSync.PostAsJsonAsync("/api/sync/folders",
+            new { parentFolderId = syncRoot, name = "cross-device" }),
+            HttpStatusCode.Forbidden);
+        await Status(sync.PostAsJsonAsync("/api/sync/folders",
+            new { parentFolderId = otherRoot, name = "cross-device" }),
+            HttpStatusCode.Forbidden);
+
         // Create a real file while creation is permitted, then revoke modification.
         await Success(admin.PutAsJsonAsync(syncPermissionRoute,
             new { permissions = (int)PermisoCarpeta.Crear, inheritToSubfolders = true }));
