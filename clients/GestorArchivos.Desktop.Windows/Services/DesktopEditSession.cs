@@ -137,6 +137,7 @@ public sealed class DesktopEditSession : IDisposable
                 await response.Content.ReadAsStreamAsync(token), cancellationToken: token);
             _version = result.RootElement.GetProperty("version").GetInt32();
             _lastHash = hash;
+            DesktopCacheState.Write(_path, hash, _version);
             _status("Cambios guardados en el servidor correctamente.");
         }
         finally
