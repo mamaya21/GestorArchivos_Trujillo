@@ -18,7 +18,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        bool allowInsecureDevelopmentCookies = false)
     {
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
@@ -55,7 +56,9 @@ public static class DependencyInjection
             {
                 options.Cookie.Name = "GestorArchivos.Auth";
                 options.Cookie.HttpOnly = true;
-                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SecurePolicy = allowInsecureDevelopmentCookies
+                    ? CookieSecurePolicy.SameAsRequest
+                    : CookieSecurePolicy.Always;
                 options.Cookie.SameSite = SameSiteMode.Strict;
 
                 options.ExpireTimeSpan = TimeSpan.FromHours(8);
