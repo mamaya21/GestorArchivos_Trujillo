@@ -27,17 +27,20 @@ public sealed class SyncAtomicFileController : ControllerBase
     private readonly ISyncChangeService _changes;
     private readonly IFolderPermissionService _permissions;
     private readonly IFileStorage _storage;
+    private readonly IChunkUploadService _chunks;
 
     public SyncAtomicFileController(
         ApplicationDbContext db,
         ISyncChangeService changes,
         IFolderPermissionService permissions,
-        IFileStorage storage)
+        IFileStorage storage,
+        IChunkUploadService chunks)
     {
         _db = db;
         _changes = changes;
         _permissions = permissions;
         _storage = storage;
+        _chunks = chunks;
     }
 
     [HttpPost]
@@ -62,12 +65,12 @@ public sealed class SyncAtomicFileController : ControllerBase
             string.IsNullOrWhiteSpace(localPath) ||
             localPath.Length > 2048 ||
             file is null ||
-            file.Length <= 0 ||
+            file.Length < 0 ||
             file.Length > MaxFileSize)
         {
             return BadRequest(new
             {
-                message = "Datos de archivo inv醠idos."
+                message = "Datos de archivo inv谩lidos."
             });
         }
 
@@ -126,26 +129,36 @@ public sealed class SyncAtomicFileController : ControllerBase
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 x => x.DispositivoId == deviceId &&
-                     x.RutaLocal == localPath &&
-                     x.Activo,
+                     x.RutaLocal == localPath,
                 cancellationToken);
 
+        var reuseTrashedMapping = false;
         if (existingItem is not null)
         {
-            if (!existingItem.Activo ||
+            if (existingItem.Tipo == TipoElementoSync.Archivo &&
+                existingItem.ArchivoRemotoId.HasValue)
+            {
+                reuseTrashedMapping = await _db.Archivos.AsNoTracking().AnyAsync(
+                    x => x.Id == existingItem.ArchivoRemotoId.Value &&
+                         x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
+            }
+
+            if (!reuseTrashedMapping && (!existingItem.Activo ||
                 existingItem.Tipo != TipoElementoSync.Archivo ||
-                !existingItem.ArchivoRemotoId.HasValue)
+                !existingItem.ArchivoRemotoId.HasValue))
             {
                 return Conflict(new
                 {
-                    message = "La ruta local ya tiene otra asociaci髇."
+                    message = "La ruta local ya tiene otra asociaci贸n."
                 });
             }
 
+            if (!reuseTrashedMapping && existingItem.ArchivoRemotoId is Guid mappedFileId)
+            {
             var existingFile = await _db.Archivos
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
-                    x => x.Id == existingItem.ArchivoRemotoId.Value &&
+                    x => x.Id == mappedFileId &&
                          x.Estado == EstadoArchivo.Activo,
                     cancellationToken);
 
@@ -155,7 +168,28 @@ public sealed class SyncAtomicFileController : ControllerBase
             {
                 return Conflict(new
                 {
-                    message = "La asociaci髇 existente no coincide."
+                    message = "La asociaci贸n existente no coincide."
+                });
+            }
+
+            // Un reintento solo es idempotente si el contenido coincide.
+            // Si el archivo local cambi贸 durante la desconexi贸n, devolver
+            // 茅xito aqu铆 descartar铆a silenciosamente esa nueva versi贸n.
+            string retryHash;
+            await using (var retryStream = file.OpenReadStream())
+            {
+                retryHash = Convert.ToHexString(
+                    await SHA256.HashDataAsync(retryStream, cancellationToken));
+            }
+
+            if (existingFile.TamanoBytes != file.Length ||
+                !string.Equals(existingFile.HashSha256, retryHash,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Conflict(new
+                {
+                    message = "El contenido local difiere del archivo remoto existente. " +
+                              "Se requiere sincronizar la nueva versi贸n; no se confirm贸 el reintento."
                 });
             }
 
@@ -169,6 +203,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                 existingFile.Version,
                 alreadyExisted = true
             });
+            }
         }
 
         var duplicate = await _db.Archivos
@@ -239,16 +274,25 @@ public sealed class SyncAtomicFileController : ControllerBase
                 CreadoPorUsuarioId = userId
             };
 
-            var syncItem = new ElementoSync
+            var syncItem = reuseTrashedMapping
+                ? await _db.ElementosSync.SingleAsync(
+                    x => x.Id == existingItem!.Id, cancellationToken)
+                : new ElementoSync
+                {
+                    DispositivoId = deviceId,
+                    RutaLocal = localPath,
+                    Tipo = TipoElementoSync.Archivo,
+                    ArchivoRemotoId = fileId
+                };
+            if (reuseTrashedMapping)
             {
-                DispositivoId = deviceId,
-                RutaLocal = localPath,
-                Tipo = TipoElementoSync.Archivo,
-                ArchivoRemotoId = fileId
-            };
+                syncItem.ArchivoRemotoId = fileId;
+                syncItem.Activo = true;
+            }
 
             _db.Archivos.Add(remoteFile);
-            _db.ElementosSync.Add(syncItem);
+            if (!reuseTrashedMapping)
+                _db.ElementosSync.Add(syncItem);
 
             await _changes.RegisterAsync(
                 folderId,
@@ -286,7 +330,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                 }
                 catch
                 {
-                    // Conservar la excepci髇 original.
+                    // Conservar la excepci贸n original.
                 }
 
                 if (physicalSaveAttempted)
@@ -299,12 +343,63 @@ public sealed class SyncAtomicFileController : ControllerBase
                     }
                     catch
                     {
-                        // Requiere limpieza posterior del archivo hu閞fano.
+                        // Requiere limpieza posterior del archivo hu茅rfano.
                     }
                 }
             }
 
             throw;
+        }
+    }
+
+    [HttpPost("uploads/{uploadId:guid}/complete")]
+    public async Task<IActionResult> CompleteUpload(
+        Guid uploadId,
+        [FromBody] CompleteDeviceUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(User.FindFirstValue("device_id"), out var deviceId))
+            return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(request.LocalPath) || request.LocalPath.Length > 2048)
+            return BadRequest(new { message = "Ruta local inv谩lida." });
+
+        var status = await _chunks.GetStatusAsync(uploadId, deviceId, cancellationToken);
+        if (status is null)
+            return NotFound();
+
+        // Create() performs the device-root, permission, duplicate and transaction checks.
+        CompletedChunkUpload completed;
+        try
+        {
+            completed = await _chunks.CompleteAsync(uploadId, deviceId, cancellationToken);
+        }
+        catch (InvalidDataException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+
+        try
+        {
+            await using var stream = await _storage.OpenReadAsync(
+                completed.RelativePath, cancellationToken);
+            var file = new FormFile(stream, 0, completed.FileSize, "file", completed.FileName)
+            {
+                Headers = new HeaderDictionary(),
+                ContentType = completed.ContentType
+            };
+
+            var result = await Create(
+                completed.FolderId, request.LocalPath, file, cancellationToken);
+
+            if (result is OkObjectResult)
+                await _chunks.CancelAsync(uploadId, deviceId, cancellationToken);
+
+            return result;
+        }
+        finally
+        {
+            await _storage.DeleteAsync(completed.RelativePath, CancellationToken.None);
         }
     }
 
@@ -343,3 +438,4 @@ public sealed class SyncAtomicFileController : ControllerBase
         return false;
     }
 }
+public sealed record CompleteDeviceUploadRequest(string LocalPath);

@@ -5,8 +5,10 @@ import {
   useRef,
   useState,
   type DragEvent,
+  type MouseEvent,
+  type PointerEvent,
 } from 'react'
-import { apiRaw, apiRequest } from '../api/client'
+import { ApiError, apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
 import { activateSyncOnThisComputer } from '../sync/syncActivation'
 import type {
@@ -16,6 +18,20 @@ import type {
   UploadInitializeResponse,
   UploadStatusResponse,
 } from '../types/api'
+
+interface ContextMenuState {
+  x: number
+  y: number
+  kind: 'file' | 'folder' | 'background'
+  file?: FileItem
+  folder?: Folder
+}
+
+interface MoveClipboard {
+  folderIds: string[]
+  fileIds: string[]
+  sourceFolderId: string | null
+}
 
 interface Breadcrumb {
   id: string | null
@@ -79,12 +95,45 @@ export default function FilesPage() {
   const [selectedFiles, setSelectedFiles] =
     useState<Set<string>>(new Set())
 
+  const [copyClipboard, setCopyClipboard] = useState<MoveClipboard | null>(null)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const touchStart = useRef<{ x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!contextMenu) return
+    const dismiss = (event: globalThis.PointerEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const dismissContext = (event: globalThis.MouseEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(null)
+    }
+    const dismissKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setContextMenu(null)
+    }
+    const dismissScroll = () => setContextMenu(null)
+    document.addEventListener('pointerdown', dismiss, true)
+    document.addEventListener('contextmenu', dismissContext, true)
+    document.addEventListener('keydown', dismissKey)
+    window.addEventListener('scroll', dismissScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true)
+      document.removeEventListener('contextmenu', dismissContext, true)
+      document.removeEventListener('keydown', dismissKey)
+      window.removeEventListener('scroll', dismissScroll, true)
+    }
+  }, [contextMenu])
+  const [treeRefresh, setTreeRefresh] = useState(0)
+  const [moveClipboard, setMoveClipboard] = useState<MoveClipboard | null>(null)
+  const [moving, setMoving] = useState(false)
+  const [draggedItem, setDraggedItem] = useState<{ kind: 'file' | 'folder'; id: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [upload, setUpload] = useState<UploadState | null>(null)
   const [pendingUpload, setPendingUpload] =
     useState<StoredUpload | null>(null)
 
+  const [syncLinkedHere, setSyncLinkedHere] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
@@ -109,6 +158,7 @@ export default function FilesPage() {
       setFiles(data.files)
       setSelectedFolders(new Set())
       setSelectedFiles(new Set())
+      setTreeRefresh((value) => value + 1)
     } catch (err) {
       setError(getError(err))
     } finally {
@@ -338,6 +388,40 @@ export default function FilesPage() {
     )
   }
 
+  async function createTextFile() {
+    if (!currentFolderId || upload) return
+
+    const result = await Swal.fire({
+      title: 'Nuevo archivo de texto',
+      input: 'text',
+      inputLabel: 'Nombre del archivo',
+      inputValue: 'Nuevo documento.txt',
+      showCancelButton: true,
+      confirmButtonText: 'Crear',
+      cancelButtonText: 'Cancelar',
+      inputValidator: (value) => {
+        const name = value.trim()
+        if (!name) return 'Ingresa un nombre.'
+        if (!name.toLowerCase().endsWith('.txt')) return 'El archivo debe tener extensión .txt.'
+        if (name === '.' || name === '..' || /[<>:"/\\|?*]/.test(name) || [...name].some(char => char.charCodeAt(0) < 32) || name.endsWith('.') || name.endsWith(' ')) return 'Nombre de archivo no válido.'
+        return undefined
+      },
+    })
+    if (!result.isConfirmed || !result.value) return
+
+    const name = result.value.trim()
+    try {
+      await apiRequest('/files/empty', {
+        method: 'POST',
+        body: JSON.stringify({ folderId: currentFolderId, name }),
+      })
+      await loadContents(currentFolderId)
+      setMessage(`"${name}" creado correctamente.`)
+    } catch (error) {
+      await showFileError(error)
+    }
+  }
+
   async function createFolder() {
     const result = await Swal.fire({
       title: 'Nueva carpeta',
@@ -409,6 +493,10 @@ export default function FilesPage() {
   }
 
   async function deleteFolder(folder: Folder) {
+    if (folder.selectorManaged) {
+      await Swal.fire({ icon: 'info', title: 'Carpeta sincronizada', text: 'Quita primero esta carpeta del selector de este dispositivo.' })
+      return
+    }
     const result = await Swal.fire({
       icon: 'warning',
       title: 'Mover a papelera',
@@ -432,6 +520,7 @@ export default function FilesPage() {
 }
 
   async function renameFile(file: FileItem) {
+    if (file.selectorManaged) return
     const result = await Swal.fire({
       title: 'Renombrar archivo',
       input: 'text',
@@ -465,6 +554,7 @@ export default function FilesPage() {
   }
 
   async function deleteFile(file: FileItem) {
+    if (file.selectorManaged) return
     const result = await Swal.fire({
       icon: 'warning',
       title: 'Mover a papelera',
@@ -487,45 +577,517 @@ export default function FilesPage() {
     }
   }
 
-  async function deleteSelected() {
-    if (!selectedCount) return
+  function copySelected() {
+    if (!selectedCount || moving || !currentFolderId) return
+    setCopyClipboard({
+      folderIds: [...selectedFolders],
+      fileIds: [...selectedFiles],
+      sourceFolderId: currentFolderId,
+    })
+    setMoveClipboard(null)
+    setSelectedFolders(new Set())
+    setSelectedFiles(new Set())
+    setMessage(`${selectedCount} elemento(s) copiado(s) al portapapeles. Abre la carpeta de destino y selecciona Pegar.`)
+  }
 
+  function cutSelected() {
+    if (!selectedCount || moving || !currentFolderId || ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged)))) return
+    setMoveClipboard({
+      folderIds: [...selectedFolders],
+      fileIds: [...selectedFiles],
+      sourceFolderId: currentFolderId,
+    })
+    setSelectedFolders(new Set())
+    setSelectedFiles(new Set())
+    setCopyClipboard(null)
+    setMessage('Elementos cortados. Abre la carpeta de destino y selecciona Pegar.')
+  }
+
+  async function findFolderRoot(folderId: string): Promise<string | null> {
+    const visited = new Set<string>()
+    let current: string | null = folderId
+    while (current && !visited.has(current)) {
+      visited.add(current)
+      const folder: Folder = await apiRequest<Folder>(`/folders/${current}`)
+      if (!folder.carpetaPadreId) return folder.id
+      current = folder.carpetaPadreId
+    }
+    return null
+  }
+
+  async function moveItems(clipboard: MoveClipboard, destinationFolderId: string | null) {
+    if (!destinationFolderId || moving || upload) return
+    if (!clipboard.sourceFolderId) {
+      await Swal.fire({ icon: 'warning', title: 'Raíz protegida', text: 'No puedes mover una carpeta raíz.' })
+      return
+    }
+    try {
+      const [sourceRoot, destinationRoot] = await Promise.all([
+        findFolderRoot(clipboard.sourceFolderId),
+        findFolderRoot(destinationFolderId),
+      ])
+      if (!sourceRoot || sourceRoot !== destinationRoot) {
+        await Swal.fire({ icon: 'warning', title: 'Movimiento bloqueado', text: 'Solo puedes mover elementos dentro de la misma raíz.' })
+        return
+      }
+    } catch (error) {
+      await showFileError(error)
+      return
+    }
+    if (clipboard.sourceFolderId === destinationFolderId) {
+      setMessage('Los elementos ya están en esta carpeta. Elige otra carpeta para moverlos.')
+      return
+    }
+    if (clipboard.folderIds.includes(destinationFolderId)) {
+      await Swal.fire({ icon: 'warning', title: 'Destino inválido', text: 'No puedes mover una carpeta dentro de sí misma.' })
+      return
+    }
+    if (clipboard.folderIds.length) {
+      try {
+        for (const id of clipboard.folderIds) {
+          const seen = new Set<string>()
+          let cursor: string | null = destinationFolderId
+          while (cursor && !seen.has(cursor)) {
+            if (cursor === id) {
+              await Swal.fire({ icon: 'warning', title: 'Destino inválido', text: 'No puedes mover una carpeta dentro de una de sus subcarpetas.' })
+              return
+            }
+            seen.add(cursor)
+            const ancestor: Folder = await apiRequest<Folder>(`/folders/${cursor}`)
+            cursor = ancestor.carpetaPadreId
+          }
+        }
+      } catch (error) {
+        await showFileError(error)
+        return
+      }
+    }
     const confirmation = await Swal.fire({
-      icon: 'warning',
-      title: 'Mover elementos a papelera',
-      text: `¿Deseas mover ${selectedCount} elemento(s) a la papelera?`,
+      title: 'Mover elementos',
+      text: `¿Mover ${clipboard.folderIds.length + clipboard.fileIds.length} elemento(s) a esta carpeta?`,
+      icon: 'question',
       showCancelButton: true,
       confirmButtonText: 'Mover',
       cancelButtonText: 'Cancelar',
     })
-
     if (!confirmation.isConfirmed) return
-
-    setLoading(true)
-
+    setMoving(true)
+    let completed = 0
+    let skipped = 0
+    setMoving(true)
     try {
-      for (const id of selectedFiles) {
-        await apiRequest(`/files/${id}`, {
-          method: 'DELETE',
-        })
-      }
-
-      for (const id of selectedFolders) {
-        await apiRequest(`/folders/${id}`, {
-          method: 'DELETE',
-        })
-      }
-
-      setMessage(
-        `${selectedCount} elemento(s) movido(s) a la papelera.`,
+      // Consultar el destino real: al arrastrar sobre otra carpeta, la lista
+      // visible todavía pertenece al origen y no permite detectar conflictos.
+      const destinationContents = await apiRequest<FolderContents>(
+        `/folders?parentId=${encodeURIComponent(destinationFolderId)}`,
       )
+      const existingNames = new Set(
+        [...destinationContents.folders, ...destinationContents.files]
+          .map(item => item.nombre.normalize('NFC').toLocaleLowerCase('es')),
+      )
+      const pending = [
+        ...clipboard.folderIds.map(id => ({ id, kind: 'folders' as const })),
+        ...clipboard.fileIds.map(id => ({ id, kind: 'files' as const })),
+      ]
+      let applyToAll: 'skip' | 'keepBoth' | 'replace' | null = null
 
-      await loadContents(currentFolderId)
+      for (const item of pending) {
+        const source = await apiRequest<{ nombre: string }>(`/${item.kind}/${item.id}`)
+        let resolution: 'skip' | 'keepBoth' | 'replace' | undefined
+        const normalized = source.nombre.normalize('NFC').toLocaleLowerCase('es')
+        if (existingNames.has(normalized)) {
+          if (applyToAll && !(applyToAll === 'replace' && item.kind === 'folders')) {
+            resolution = applyToAll
+          } else {
+            const choice = await Swal.fire({
+              icon: 'warning',
+              title: 'Nombre duplicado',
+              text: `Ya existe "${source.nombre}" en el destino. ¿Qué deseas hacer?`,
+              showCancelButton: true,
+              confirmButtonText: 'Continuar',
+              cancelButtonText: 'Cancelar operación',
+              confirmButtonColor: '#2563eb',
+              width: 480,
+              customClass: { popup: 'ga-conflict-dialog' },
+              html: `<div class="ga-conflict-item"><span class="ga-conflict-item-label">${item.kind === 'folders' ? 'Carpeta' : 'Archivo'} con conflicto</span><strong class="ga-conflict-item-name">${source.nombre.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)}</strong><span class="ga-conflict-item-hint">Ya existe un elemento con este nombre en el destino.</span></div><div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Crear una copia con un nombre diferente.</small></span></label>
+                ${item.kind === 'files' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No modificar este elemento y continuar.</small></span></label>
+              </div><label class="ga-conflict-apply"><input type="checkbox" id="move-all" /> Aplicar a todos los conflictos</label>`,
+              preConfirm: () => ({
+                resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
+                all: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#move-all')?.checked),
+              }),
+            })
+            if (choice.isDismissed) break
+            const selected = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; all: boolean } | undefined
+            resolution = selected?.resolution ?? 'keepBoth'
+            if (selected?.all) applyToAll = resolution
+          }
+        }
+        const result = await apiRequest<{ skipped?: boolean } | undefined>(`/${item.kind}/${item.id}/move`, {
+          method: 'PUT',
+          body: JSON.stringify({ destinationFolderId, conflictResolution: resolution }),
+        })
+        if (result?.skipped) {
+          skipped++
+        } else {
+          completed++
+          existingNames.add(normalized)
+        }
+      }
+      setMoveClipboard(null)
+      setMessage(`${completed} movido(s), ${skipped} omitido(s).`)
     } catch (err) {
-      setError(getError(err))
-      await loadContents(currentFolderId)
+      setError(`${completed} movido(s). Operación interrumpida: ${getError(err)}`)
+      setMoveClipboard(null)
     } finally {
-      setLoading(false)
+      setMoving(false)
+      await loadContents(currentFolderId)
+    }
+  }
+
+  function handleInternalDragStart(event: DragEvent<HTMLDivElement>, kind: 'file' | 'folder', id: string) {
+    if (!currentFolderId || moving || upload) { event.preventDefault(); return }
+    const selected = kind === 'folder' ? selectedFolders.has(id) : selectedFiles.has(id)
+    const folderIds = selected ? [...selectedFolders] : kind === 'folder' ? [id] : []
+    const fileIds = selected ? [...selectedFiles] : kind === 'file' ? [id] : []
+    const clipboard: MoveClipboard = { folderIds, fileIds, sourceFolderId: currentFolderId }
+    event.dataTransfer.effectAllowed = 'copyMove'
+    event.dataTransfer.setData('application/x-gestorarchivos-item', JSON.stringify(clipboard))
+    setDraggedItem({ kind, id })
+  }
+
+  function handleInternalDrop(event: DragEvent<HTMLElement>, destinationFolderId: string | null) {
+    const raw = event.dataTransfer.getData('application/x-gestorarchivos-item')
+    if (!raw) return false
+    event.preventDefault()
+    event.stopPropagation()
+    setDraggedItem(null)
+    setDragging(false)
+    try {
+      const data: unknown = JSON.parse(raw)
+      if (!data || typeof data !== 'object') throw new Error('Selección inválida')
+      const value = data as Partial<MoveClipboard> & { kind?: string; id?: string }
+      const folderIds = Array.isArray(value.folderIds) ? value.folderIds : value.kind === 'folder' && typeof value.id === 'string' ? [value.id] : []
+      const fileIds = Array.isArray(value.fileIds) ? value.fileIds : value.kind === 'file' && typeof value.id === 'string' ? [value.id] : []
+      if (![...folderIds, ...fileIds].every(id => typeof id === 'string') || !folderIds.length && !fileIds.length) throw new Error('Selección inválida')
+      const clipboard: MoveClipboard = { folderIds, fileIds, sourceFolderId: value.sourceFolderId ?? currentFolderId }
+      if (event.ctrlKey) {
+        setMoveClipboard(null)
+        setCopyClipboard(clipboard)
+        void pasteCopiedSelection(clipboard, destinationFolderId)
+      } else {
+        void moveItems(clipboard, destinationFolderId)
+      }
+    } catch {
+      setError('No se pudo interpretar la selección arrastrada.')
+    }
+    return true
+  }
+
+  async function pasteCopy() {
+    if (!copyClipboard) return
+    await pasteCopiedSelection(copyClipboard, currentFolderId)
+  }
+
+  async function pasteCopiedSelection(clipboard: MoveClipboard, destinationFolderId: string | null) {
+    if (!destinationFolderId || upload || moving) return
+    let completed = 0
+    let skipped = 0
+    let applyToAll: 'skip' | 'keepBoth' | 'replace' | null = null
+    setMoving(true)
+    setError('')
+    try {
+      const entries = [
+        ...clipboard.folderIds.map(id => ({ id, kind: 'folders' as const })),
+        ...clipboard.fileIds.map(id => ({ id, kind: 'files' as const })),
+      ]
+      for (const entry of entries) {
+        const source = await apiRequest<{ nombre: string }>(`/${entry.kind}/${entry.id}`)
+        const payload = {
+          destinationFolderId,
+          fileIds: entry.kind === 'files' ? [entry.id] : [],
+          folderIds: entry.kind === 'folders' ? [entry.id] : [],
+        }
+        let resolution: 'skip' | 'keepBoth' | 'replace' | undefined = applyToAll === 'replace' && entry.kind === 'folders' ? undefined : applyToAll ?? undefined
+        let result: { skipped?: boolean } | undefined
+        try {
+          result = await apiRequest('/files/copy-selection', {
+            method: 'POST',
+            body: JSON.stringify({ ...payload, conflictResolution: resolution }),
+          })
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.status !== 409) throw err
+          if (!resolution) {
+            const choice = await Swal.fire({
+              icon: 'warning',
+              title: 'Nombre duplicado',
+              showCancelButton: true,
+              confirmButtonText: 'Continuar',
+              cancelButtonText: 'Cancelar operación',
+              confirmButtonColor: '#2563eb',
+              width: 480,
+              customClass: { popup: 'ga-conflict-dialog' },
+              html: `<div class="ga-conflict-item"><span class="ga-conflict-item-label">${entry.kind === 'folders' ? 'Carpeta' : 'Archivo'} con conflicto</span><strong class="ga-conflict-item-name">${source.nombre.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)}</strong><span class="ga-conflict-item-hint">Ya existe un elemento con este nombre en el destino.</span></div><div class="ga-conflict-options" role="radiogroup" aria-label="Resolver conflicto">
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="keepBoth" checked /><span><strong>Conservar ambos</strong><small>Crear una copia con un nombre diferente.</small></span></label>
+                ${entry.kind === 'files' ? '<label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="replace" /><span><strong>Reemplazar archivo</strong><small>Conservar la versión anterior en el historial.</small></span></label>' : ''}
+                <label class="ga-conflict-option"><input type="radio" name="ga-resolution" value="skip" /><span><strong>Omitir</strong><small>No modificar este elemento y continuar.</small></span></label>
+              </div><label class="ga-conflict-apply"><input type="checkbox" id="copy-conflict-all" /> Aplicar a todos los conflictos</label>`,
+              preConfirm: () => ({
+                resolution: Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-resolution"]:checked')?.value ?? 'keepBoth',
+                applyToAll: Boolean(Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('#copy-conflict-all')?.checked),
+              }),
+            })
+            if (choice.isDismissed) break
+            const selection = choice.value as { resolution: 'skip' | 'keepBoth' | 'replace'; applyToAll: boolean } | undefined
+            resolution = selection?.resolution ?? 'keepBoth'
+            if (selection?.applyToAll) applyToAll = resolution
+          }
+          result = await apiRequest('/files/copy-selection', {
+            method: 'POST',
+            body: JSON.stringify({ ...payload, conflictResolution: resolution }),
+          })
+        }
+        if (result?.skipped) skipped++
+        else completed++
+      }
+      setCopyClipboard(null)
+      setMessage(`${completed} copiado(s), ${skipped} omitido(s).`)
+    } catch (error) {
+      setError(`${completed} copiado(s). Operación interrumpida: ${getError(error)}`)
+    } finally {
+      setMoving(false)
+      await loadContents(currentFolderId)
+    }
+  }
+
+  async function downloadSelection(fileIds: string[], folderIds: string[] = []) {
+    if (fileIds.length === 1 && folderIds.length === 0) {
+      const file = files.find(item => item.id === fileIds[0])
+      if (file) downloadFile(file)
+      return
+    }
+    try {
+      const response = await apiRaw('/files/download-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileIds, folderIds }),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'archivos-seleccionados.zip'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch (error) {
+      await showFileError(error)
+    }
+  }
+
+  async function deleteSelection(folderIds: string[], fileIds: string[]) {
+    if (folderIds.some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || fileIds.some(id => files.some(file => file.id === id && file.selectorManaged))) {
+      await Swal.fire({ icon: 'info', title: 'Selección protegida', text: 'Quita primero las carpetas sincronizadas desde el selector.' })
+      return
+    }
+    if (!folderIds.length && !fileIds.length || moving) return
+    const confirmation = await Swal.fire({
+      icon: 'warning',
+      title: 'Mover selección a papelera',
+      text: `¿Mover ${folderIds.length + fileIds.length} elemento(s) a la papelera?`,
+      showCancelButton: true,
+      confirmButtonText: 'Mover a papelera',
+      cancelButtonText: 'Cancelar',
+    })
+    if (!confirmation.isConfirmed) return
+    let completed = 0
+    setMoving(true)
+    try {
+      for (const id of fileIds) {
+        await apiRequest(`/files/${id}`, { method: 'DELETE' })
+        completed++
+      }
+      for (const id of folderIds) {
+        await apiRequest(`/folders/${id}`, { method: 'DELETE' })
+        completed++
+      }
+      setMessage(`${completed} elemento(s) enviado(s) a la papelera.`)
+    } catch (error) {
+      setError(`${completed} enviado(s). Operación interrumpida: ${getError(error)}`)
+    } finally {
+      setMoving(false)
+      await loadContents(currentFolderId)
+    }
+  }
+
+  function cancelLongPress() {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    longPressTimer.current = null
+    touchStart.current = null
+  }
+
+  function touchMenu(kind: ContextMenuState['kind'], file?: FileItem, folder?: Folder) {
+    return {
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        if (event.pointerType !== 'touch' || (event.target as HTMLElement).closest('button,input')) return
+        cancelLongPress()
+        const x = event.clientX, y = event.clientY
+        touchStart.current = { x, y }
+        longPressTimer.current = setTimeout(() => {
+          setContextMenu({ x: Math.min(x, window.innerWidth - 220), y: Math.min(y, window.innerHeight - 360), kind, file, folder })
+          longPressTimer.current = null
+        }, 550)
+      },
+      onPointerMove: (event: PointerEvent<HTMLElement>) => {
+        if (touchStart.current && Math.hypot(event.clientX - touchStart.current.x, event.clientY - touchStart.current.y) > 12) cancelLongPress()
+      },
+      onPointerUp: cancelLongPress,
+      onPointerCancel: cancelLongPress,
+      onPointerLeave: cancelLongPress,
+    }
+  }
+
+  function showContextMenu(event: MouseEvent<HTMLElement>, kind: ContextMenuState['kind'], file?: FileItem, folder?: Folder) {
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenu({ x: Math.min(event.clientX, window.innerWidth - 220), y: Math.min(event.clientY, window.innerHeight - 360), kind, file, folder })
+  }
+
+  function contextAction(action: string) {
+    const menu = contextMenu
+    setContextMenu(null)
+    if (!menu) return
+    const file = menu.file
+    const folder = menu.folder
+    const isSelected = Boolean((file && selectedFiles.has(file.id)) || (folder && selectedFolders.has(folder.id)))
+    const folderIds = isSelected ? [...selectedFolders] : folder ? [folder.id] : []
+    const fileIds = isSelected ? [...selectedFiles] : file ? [file.id] : []
+    const multiple = folderIds.length + fileIds.length > 1
+    if (file?.selectorManaged && (action === 'rename' || action === 'delete' || action === 'cut')) return
+    if (folder && (
+      (folder.selectorManaged) &&
+      (action === 'rename' || action === 'delete' || action === 'cut') ||
+      folder.deviceContainer && (action === 'delete' || action === 'cut')
+    )) return
+    if ((action === 'cut' || action === 'delete') && (folderIds.some(id => folders.some(item => item.id === id && item.selectorManaged)) || fileIds.some(id => files.some(item => item.id === id && item.selectorManaged)))) return
+    if (multiple && ['open', 'edit', 'rename'].includes(action)) return
+    if (action === 'paste') {
+      if (moveClipboard) void moveItems(moveClipboard, currentFolderId)
+      else if (copyClipboard) void pasteCopy()
+      return
+    }
+    if (action === 'new-folder') { void createFolder(); return }
+    if (action === 'new-text-file') { void createTextFile(); return }
+    if (action === 'upload') { fileInput.current?.click(); return }
+    if (action === 'open') {
+      if (file) openFile(file)
+      else if (folder) openFolder(folder)
+    }
+    if (action === 'download' && (fileIds.length || folderIds.length)) void downloadSelection(fileIds, folderIds)
+    if (action === 'edit' && file) void editTextFile(file)
+    if (action === 'versions' && file) void showFileVersions(file)
+    if (action === 'rename') {
+      if (file) void renameFile(file)
+      else if (folder) void renameFolder(folder)
+    }
+    if (action === 'delete') {
+      if (multiple) void deleteSelection(folderIds, fileIds)
+      else if (file) void deleteFile(file)
+      else if (folder) void deleteFolder(folder)
+    }
+    if (action === 'copy' && (fileIds.length || folderIds.length)) {
+      setCopyClipboard({ folderIds, fileIds, sourceFolderId: currentFolderId })
+      setMoveClipboard(null)
+      setSelectedFolders(new Set())
+      setSelectedFiles(new Set())
+      setMessage(`${fileIds.length + folderIds.length} elemento(s) copiado(s) al portapapeles. Abre la carpeta de destino y selecciona Pegar.`)
+    }
+    if (action === 'cut') {
+      if (!currentFolderId) return
+      if (folderIds.length + fileIds.length === 0) return
+      setCopyClipboard(null)
+      setMoveClipboard({ folderIds, fileIds, sourceFolderId: currentFolderId })
+      setSelectedFolders(new Set())
+      setSelectedFiles(new Set())
+      setMessage(`${folderIds.length + fileIds.length} elemento(s) cortado(s). Abre la carpeta de destino y selecciona Pegar.`)
+    }
+  }
+
+  async function showFileVersions(file: FileItem) {
+    try {
+      const data = await apiRequest<{
+        current: number
+        history: Array<{ id: string; numero: number; tamanoBytes: number; fechaUtc: string }>
+      }>(`/files/${file.id}/versions`)
+      if (!data.history.length) {
+        await Swal.fire({ icon: 'info', title: 'Historial de versiones', text: 'Este archivo todavía no tiene versiones anteriores.' })
+        return
+      }
+      const formatSize = (bytes: number) => bytes < 1024
+        ? `${bytes} B`
+        : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`
+      const escapeHtml = (value: string) => value.replace(/[&<>"']/g, char =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)
+      const rows = data.history.map((version, index) => {
+        const date = new Date(version.fechaUtc)
+        const displayDate = Number.isNaN(date.getTime()) ? 'Fecha no disponible' : date.toLocaleString('es-PE')
+        return `<label class="ga-version-option">
+          <input type="radio" name="ga-version" value="${escapeHtml(version.id)}" ${index === 0 ? 'checked' : ''} />
+          <span class="ga-version-info"><strong>Versión ${version.numero}</strong><small>${escapeHtml(displayDate)}</small></span>
+          <span class="ga-version-size">${formatSize(version.tamanoBytes)}</span>
+        </label>`
+      }).join('')
+      const choice = await Swal.fire({
+        title: 'Historial de versiones',
+        text: file.nombre,
+        width: 520,
+        customClass: { popup: 'ga-versions-dialog' },
+        html: `<div class="ga-version-heading"><span>Versión actual: ${data.current}</span><span>${data.history.length} anterior(es)</span></div>
+          <div class="ga-version-list" role="radiogroup" aria-label="Selecciona una versión anterior">${rows}</div>
+          <p class="ga-version-help">Restaurar conserva la versión actual en el historial.</p>`,
+        showCancelButton: true,
+        showDenyButton: true,
+        confirmButtonText: 'Restaurar',
+        denyButtonText: 'Descargar',
+        cancelButtonText: 'Cerrar',
+        confirmButtonColor: '#2563eb',
+        denyButtonColor: '#475569',
+        preConfirm: () => Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-version"]:checked')?.value,
+        preDeny: () => Swal.getHtmlContainer()?.querySelector<HTMLInputElement>('input[name="ga-version"]:checked')?.value,
+      })
+      if (choice.isDismissed || !choice.value) return
+      const versionId = String(choice.value)
+      if (choice.isDenied) {
+        const response = await apiRaw(`/files/${file.id}/versions/${versionId}/download`)
+        if (!response.ok) throw new Error('No se pudo descargar la versión.')
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = file.nombre
+        link.click()
+        URL.revokeObjectURL(url)
+        return
+      }
+      if (choice.isConfirmed) {
+        const confirmation = await Swal.fire({
+          icon: 'question',
+          title: 'Restaurar versión',
+          text: 'La versión actual quedará guardada en el historial. ¿Continuar?',
+          showCancelButton: true,
+          confirmButtonText: 'Restaurar',
+          cancelButtonText: 'Cancelar',
+        })
+        if (!confirmation.isConfirmed) return
+        await apiRequest(`/files/${file.id}/versions/${versionId}/restore`, { method: 'POST' })
+        setMessage(`Versión restaurada: ${file.nombre}.`)
+        await loadContents(currentFolderId)
+      }
+    } catch (error) {
+      await showFileError(error)
     }
   }
 
@@ -947,6 +1509,7 @@ export default function FilesPage() {
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
+    if (handleInternalDrop(event, currentFolderId)) return
     event.preventDefault()
     setDragging(false)
 
@@ -957,34 +1520,244 @@ export default function FilesPage() {
     }
   }
 
-  async function activateSync() {
-  try {
-    await activateSyncOnThisComputer()
-
-    await Swal.fire({
-      icon: 'success',
-      title: 'Sincronización activada',
-      text: 'Este equipo quedó registrado correctamente.',
-    })
-  } catch (error) {
-    await Swal.fire({
-      icon: 'error',
-      title: 'No se pudo activar',
-      text: getError(error),
-    })
+  async function refreshSyncLinkStatus() {
+    try {
+      const [devices, response] = await Promise.all([
+        apiRequest<Array<{ deviceId: string; active: boolean }>>('/sync/devices'),
+        fetch('http://127.0.0.1:47831/control'),
+      ])
+      if (!response.ok) { setSyncLinkedHere(false); return }
+      const local = await response.json() as { deviceId?: string }
+      setSyncLinkedHere(Boolean(local.deviceId && devices.some(
+        device => device.active && device.deviceId === local.deviceId,
+      )))
+    } catch { setSyncLinkedHere(false) }
   }
-}
+
+  async function openSyncManagement() {
+    try {
+      const devices = await apiRequest<Array<{
+        deviceId: string
+        deviceName: string
+        rootFolderName: string
+        rootFolderDeleted: boolean
+        active: boolean
+        lastConnectionUtc: string | null
+      }>>('/sync/devices')
+
+      const active = devices.filter((device) => device.active)
+      const rows = active.map((device) =>
+        `<div style="padding:8px 0;text-align:left;border-bottom:1px solid #ddd"><strong>${escapeSyncHtml(device.deviceName)}</strong><br/><small>Carpeta: ${escapeSyncHtml(device.rootFolderName)}</small></div>`,
+      ).join('')
+
+      // El estado de pausa es local a esta computadora, no global a la cuenta.
+      let localState: { paused: boolean; deviceId?: string } | null = null
+      try {
+        const response = await fetch('http://127.0.0.1:47831/control')
+        if (response.ok) localState = await response.json() as { paused: boolean; deviceId?: string }
+      } catch {
+        // El cliente local puede no estar instalado o ejecutándose.
+      }
+
+      const linkedHere = active.find(d => d.deviceId === localState?.deviceId)
+      setSyncLinkedHere(Boolean(linkedHere))
+      const result = await Swal.fire({
+        title: 'Sincronización',
+        html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
+          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Aplicación de sincronización no disponible' : !localState.deviceId || !linkedHere ? 'Desvinculado' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
+          <p style="font-size:13px">Las selecciones se administran desde el selector de sincronización. Desvincular conserva los archivos locales y remotos.</p>`,
+        showCancelButton: true,
+        showDenyButton: linkedHere !== undefined,
+        showConfirmButton: active.length === 0 || linkedHere !== undefined,
+        confirmButtonText: active.length === 0 ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
+        denyButtonText: 'Desvincular este equipo',
+        cancelButtonText: 'Cerrar',
+        width: 540,
+      })
+
+      if (result.isDenied && linkedHere) {
+        const confirm = await Swal.fire({
+          icon: 'warning',
+          title: 'Desvincular este equipo',
+          html: `<p style="font-size:14px">¿Qué deseas hacer con la carpeta <strong>${escapeSyncHtml(linkedHere.rootFolderName)}</strong>?</p>
+            <div id="sync-unlink-options" style="display:grid;gap:10px;text-align:left;margin:18px 0">
+              <label style="display:flex;gap:12px;align-items:flex-start;border:2px solid #6757d8;border-radius:12px;padding:15px;cursor:pointer">
+                <input type="radio" name="sync-unlink-mode" value="keep" checked style="margin-top:5px;accent-color:#6757d8">
+                <span><strong>Conservar carpeta web</strong><br><small>Desvincular ahora y poder retomar después con los mismos archivos remotos.</small></span>
+              </label>
+              <label style="display:flex;gap:12px;align-items:flex-start;border:1px solid #d9dce4;border-radius:12px;padding:15px;cursor:pointer">
+                <input type="radio" name="sync-unlink-mode" value="discard" style="margin-top:5px;accent-color:#6757d8">
+                <span><strong>Iniciar desde cero</strong><br><small>Enviar la carpeta web a Papelera y permitir una nueva selección de carpetas.</small></span>
+              </label>
+            </div>
+            <p style="font-size:12px;color:#64748b">En ambos casos, los archivos locales del equipo se conservan.</p>`,
+          didOpen: () => {
+            const container = document.getElementById('sync-unlink-options')
+            container?.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach(input => {
+              input.addEventListener('change', () => {
+                container.querySelectorAll<HTMLLabelElement>('label').forEach(label => {
+                  label.style.border = label.contains(container.querySelector('input:checked')) ? '2px solid #6757d8' : '1px solid #d9dce4'
+                })
+              })
+            })
+          },
+          preConfirm: () => document.querySelector<HTMLInputElement>('input[name="sync-unlink-mode"]:checked')?.value,
+          showCancelButton: true,
+          confirmButtonText: 'Continuar',
+          cancelButtonText: 'Cancelar',
+          width: 560,
+        })
+        if (!confirm.isConfirmed) return
+        if (confirm.value === 'discard') {
+          const finalConfirm = await Swal.fire({
+            icon: 'warning',
+            title: '¿Retirar la carpeta web?',
+            text: 'La carpeta raíz y todo su contenido remoto pasarán a Papelera. Los archivos locales permanecerán intactos. Para volver a sincronizar, deberás registrar una sincronización nueva.',
+            showCancelButton: true,
+            confirmButtonText: 'Sí, retirar carpeta web',
+            cancelButtonText: 'Cancelar',
+            confirmButtonColor: '#dc3545',
+          })
+          if (!finalConfirm.isConfirmed) return
+        }
+        // Pausar primero, revocar en el servidor y retirar las credenciales locales.
+        // Ninguna de estas acciones elimina archivos ni carpetas.
+        const pauseResponse = await fetch('http://127.0.0.1:47831/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paused: true }),
+        })
+        if (!pauseResponse.ok) throw new Error('No se pudo pausar el cliente local')
+        const stopResponse = await fetch('http://127.0.0.1:47831/quiesce', { method: 'POST' })
+        if (!stopResponse.ok) throw new Error('No se pudo detener y confirmar el cierre de las transferencias activas')
+        await apiRequest(`/sync/devices/${linkedHere.deviceId}/unlink`, { method: 'POST' })
+        const deactivateResponse = await fetch('http://127.0.0.1:47831/deactivate', {
+          method: 'POST',
+        })
+        if (!deactivateResponse.ok) throw new Error('Se revocó el dispositivo remoto, pero no se pudo limpiar el registro local')
+        setSyncLinkedHere(false)
+        if (confirm.value === 'discard') {
+          await apiRequest(`/sync/devices/${linkedHere.deviceId}/discard-root`, { method: 'POST' })
+        }
+        await Swal.fire({
+          icon: 'success',
+          title: 'Equipo desvinculado de forma segura',
+          text: confirm.value === 'discard'
+            ? 'La carpeta web se trasladó a Papelera. Los archivos locales se conservaron. Ya puedes iniciar una sincronización nueva.'
+            : 'Los archivos locales y remotos se conservaron. Ya puedes volver a activar la sincronización.',
+        })
+        return
+      }
+      if (!result.isConfirmed) return
+
+      if (active.length === 0) {
+        const previous = devices.filter(device => !device.active && !device.rootFolderDeleted)
+        let reuseDeviceId: string | undefined
+        let reuseDeviceName: string | undefined
+        if (previous.length > 0) {
+          const choices = previous.map(device => `
+            <label style="display:flex;gap:12px;align-items:flex-start;border:1px solid #d9dce4;border-radius:12px;padding:15px;cursor:pointer">
+              <input type="radio" name="sync-activation-mode" value="${device.deviceId}" style="margin-top:5px;accent-color:#6757d8">
+              <span><strong>Retomar ${escapeSyncHtml(device.deviceName)}</strong><br>
+              <small>Reutilizar la carpeta ${escapeSyncHtml(device.rootFolderName)} y continuar con los archivos existentes.</small></span>
+            </label>`).join('')
+          const choice = await Swal.fire({
+            title: 'Configurar sincronización',
+            html: `<p style="font-size:14px">Selecciona cómo deseas activar la sincronización.</p>
+              <div id="sync-activation-options" style="display:grid;gap:10px;text-align:left;margin:18px 0">
+                <label style="display:flex;gap:12px;align-items:flex-start;border:2px solid #6757d8;border-radius:12px;padding:15px;cursor:pointer">
+                  <input type="radio" name="sync-activation-mode" value="new" checked style="margin-top:5px;accent-color:#6757d8">
+                  <span><strong>Iniciar sincronización nueva</strong><br><small>Crear una carpeta raíz nueva y seleccionar nuevamente qué sincronizar. Las raíces anteriores se conservan.</small></span>
+                </label>
+                ${choices}
+              </div>`,
+            didOpen: () => {
+              const container = document.getElementById('sync-activation-options')
+              container?.querySelectorAll<HTMLInputElement>('input[type="radio"]').forEach(input => {
+                input.addEventListener('change', () => {
+                  container.querySelectorAll<HTMLLabelElement>('label').forEach(label => {
+                    label.style.border = label.contains(container.querySelector('input:checked')) ? '2px solid #6757d8' : '1px solid #d9dce4'
+                  })
+                })
+              })
+            },
+            preConfirm: () => document.querySelector<HTMLInputElement>('input[name="sync-activation-mode"]:checked')?.value,
+            showCancelButton: true,
+            confirmButtonText: 'Continuar',
+            cancelButtonText: 'Cancelar',
+            width: 580,
+          })
+          if (!choice.isConfirmed) return
+          if (choice.value !== 'new') {
+            const selected = previous.find(device => device.deviceId === choice.value)
+            if (!selected) throw new Error('Dispositivo anterior no válido')
+            reuseDeviceId = selected.deviceId
+            reuseDeviceName = selected.deviceName
+          } else {
+            const confirmNew = await Swal.fire({
+              icon: 'info',
+              title: 'Crear sincronización nueva',
+              text: 'Se creará una nueva carpeta raíz. Las carpetas remotas anteriores no se eliminarán ni se reutilizarán.',
+              showCancelButton: true,
+              confirmButtonText: 'Crear nueva',
+              cancelButtonText: 'Volver',
+            })
+            if (!confirmNew.isConfirmed) return
+          }
+        }
+        await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
+        setSyncLinkedHere(true)
+        let selectorOpened = false
+        try {
+          const selectorResponse = await fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+          selectorOpened = selectorResponse.ok
+        } catch {
+          // El agente del selector puede no estar disponible en este equipo.
+        }
+        if (!selectorOpened) {
+          await Swal.fire({
+            icon: 'warning',
+            title: 'Dispositivo registrado; falta elegir carpetas',
+            text: 'No se pudo abrir el selector de sincronización. Abre la aplicación de sincronización de este equipo y vuelve a intentarlo. No se ha confirmado la selección de carpetas.',
+          })
+          return
+        }
+        await Swal.fire({
+          icon: 'success',
+          title: 'Dispositivo registrado',
+          text: 'Se abrió el selector de sincronización. Revisa y guarda las carpetas y archivos que deseas sincronizar.',
+        })
+        return
+      }
+
+      if (localState === null || linkedHere === undefined) return
+      const response = await fetch('http://127.0.0.1:47831/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: !localState.paused }),
+      })
+      if (!response.ok) throw new Error(`El cliente local respondió HTTP ${response.status}`)
+      await Swal.fire({
+        icon: 'success',
+        title: localState.paused ? 'Sincronización reanudada' : 'Sincronización pausada',
+        text: localState.paused ? 'El motor retomará la reconciliación en su siguiente ciclo.' : 'No se iniciarán nuevos ciclos de sincronización.',
+      })
+    } catch (error) {
+      await Swal.fire({ icon: 'error', title: 'Error de sincronización', text: getError(error) })
+    }
+  }
 
   return (
     <div
       className="file-manager"
+      onClick={() => setContextMenu(null)}
       onDragEnter={(event) => {
         event.preventDefault()
-        setDragging(true)
+        if (!event.dataTransfer.types.includes('application/x-gestorarchivos-item')) setDragging(true)
       }}
       onDragOver={(event) => {
         event.preventDefault()
-        setDragging(true)
+        if (!event.dataTransfer.types.includes('application/x-gestorarchivos-item')) setDragging(true)
       }}
       onDragLeave={(event) => {
         if (event.currentTarget === event.target) {
@@ -992,70 +1765,38 @@ export default function FilesPage() {
         }
       }}
       onDrop={handleDrop}
+      onDragEnd={() => setDraggedItem(null)}
     >
-      <div className="toolbar">
-        <div>
-
-          <div className="folder-navigation">
-            <button
-              type="button"
-              title="Atrás"
-              disabled={historyIndex <= 0}
-              onClick={navigateBack}
-            >
-              ←
-            </button>
-
-            <button
-              type="button"
-              title="Adelante"
-              disabled={historyIndex >= navigationHistory.length - 1}
-              onClick={navigateForward}
-            >
-              →
-            </button>
-          </div>
-
-          <h1>Archivos</h1>
-
-          <div className="breadcrumbs">
-            {breadcrumbs.map((item, index) => (
-              <span key={item.id ?? 'root'}>
-                {index > 0 && <b>/</b>}
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigateBreadcrumb(index)
-                  }
-                >
-                  {item.nombre}
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="toolbar-actions">
-          <button
-            type="button"
-            onClick={() => void activateSync()}
-          >
-            Activar sincronización
-          </button>
-
-          <button type="button" onClick={createFolder}>
-            + Nueva carpeta
-          </button>
-
-          <button
-            type="button"
-            disabled={!currentFolderId || !!upload}
-            onClick={() => fileInput.current?.click()}
-          >
-            ↑ Subir archivos
-          </button>
-
+      <div className="file-page-heading">
+        <h1>Archivos</h1>
+          <details className="file-sync-dropdown" onToggle={(event) => {
+              if (event.currentTarget.open) void refreshSyncLinkStatus()
+            }}>
+            <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
+            <div className="file-sync-dropdown-menu">
+              {syncLinkedHere && <button
+                type="button"
+                onClick={(event) => {
+                  event.currentTarget.closest('details')?.removeAttribute('open')
+                  void fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+                    .then(response => {
+                      if (!response.ok) throw new Error(`Agente local: HTTP ${response.status}`)
+                    })
+                    .catch(() => void Swal.fire({
+                      icon: 'error',
+                      title: 'Selector de sincronización no disponible',
+                      text: 'Abre la aplicación de sincronización de Gestor de Archivos en este equipo e inténtalo nuevamente.',
+                    }))
+                }}
+              >Seleccionar sincronización</button>}
+              <button type="button" onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open')
+                void openSyncManagement()
+              }}>Administrar sincronización</button>
+            </div>
+          </details>
+      </div>
+      <div className="file-hidden-inputs">
           <input
             ref={fileInput}
             type="file"
@@ -1087,41 +1828,37 @@ export default function FilesPage() {
               }
             }}
           />
-        </div>
       </div>
-
       <div className="explorer-tools">
-        <input
-          className="search-box"
-          type="search"
-          placeholder="Buscar archivos y carpetas..."
-          value={search}
-          onChange={(event) =>
-            setSearch(event.target.value)
-          }
-        />
 
-        {selectedCount > 0 && (
-          <div className="selection-actions">
-            <strong>
-              {selectedCount} seleccionado(s)
-            </strong>
 
-            <button
-              type="button"
-              onClick={() => void deleteSelected()}
-            >
-              Mover a papelera
-            </button>
+        {(copyClipboard || moveClipboard || selectedCount > 0) && (
+          <div className="selection-actions explorer-selection-bar">
+            {moveClipboard ? (
+              <>
+                <span className="explorer-selection-count">{moveClipboard.folderIds.length + moveClipboard.fileIds.length} en espera de mover</span>
+                <button type="button" disabled={!currentFolderId || currentFolderId === moveClipboard.sourceFolderId || moving || !!upload} onClick={() => void moveItems(moveClipboard, currentFolderId)}>Pegar aquí</button>
+                <button type="button" onClick={() => setMoveClipboard(null)}>Cancelar</button>
+              </>
+            ) : copyClipboard ? (
+              <>
+                <span className="explorer-selection-count">Copiados: {copyClipboard.fileIds.length + copyClipboard.folderIds.length} elemento(s)</span>
+                <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={() => void pasteCopy()}>Pegar aquí</button>
+                <button type="button" onClick={() => setCopyClipboard(null)}>Cancelar</button>
+              </>
+            ) : (
+              <>
+                <span className="explorer-selection-count">{selectedCount} seleccionado(s)</span>
+                <button type="button" disabled={!currentFolderId || moving || !!upload} onClick={copySelected}>Copiar</button>
+                <button type="button" disabled={!currentFolderId || moving || !!upload || ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged)))} onClick={cutSelected}>Cortar</button>
+                <button type="button" onClick={() => { setSelectedFolders(new Set()); setSelectedFiles(new Set()) }}>Deseleccionar</button>
+              </>
+            )}
           </div>
         )}
       </div>
 
-      {currentFolderId && (
-        <div className="drop-help">
-          Arrastra archivos aquí para subirlos
-        </div>
-      )}
+
 
       {upload && (
         <div className="upload-box">
@@ -1184,7 +1921,91 @@ export default function FilesPage() {
         </div>
       )}
 
-      <div className="explorer">
+      {currentFolderId && <p className="file-drop-hint">Arrastra archivos aquí para subirlos</p>}
+
+      <div className="explorer-layout">
+        <aside className="folder-sidebar" aria-label="Navegador de carpetas">
+          <strong>Carpetas</strong>
+          <button type="button" className="tree-root" onClick={() => navigateTo([{ id: null, nombre: 'Inicio' }])}>⌂ Inicio</button>
+          <FolderTree parentId={null} depth={0} refresh={treeRefresh} activeId={currentFolderId}
+            onNavigate={(path) => navigateTo([{ id: null, nombre: 'Inicio' }, ...path])}
+            onMove={(event, folderId) => handleInternalDrop(event, folderId)}
+            onContext={(event, folder) => showContextMenu(event, 'folder', undefined, folder)} />
+        </aside>
+      <div className="explorer" {...touchMenu('background')} onContextMenu={(event) => {
+        if (event.target === event.currentTarget) showContextMenu(event, 'background')
+      }}>
+        <div className="file-explorer-commandbar">
+          <div className="file-explorer-navigation">
+          <div className="file-location-row">
+          <div className="folder-navigation">
+            <button
+              type="button"
+              title="Atrás"
+              disabled={historyIndex <= 0}
+              onClick={navigateBack}
+            >
+              ←
+            </button>
+
+            <button
+              type="button"
+              title="Adelante"
+              disabled={historyIndex >= navigationHistory.length - 1}
+              onClick={navigateForward}
+            >
+              →
+            </button>
+          </div>
+          <div className="breadcrumbs">
+            {breadcrumbs.map((item, index) => (
+              <span key={item.id ?? 'root'}>
+                {index > 0 && <b>/</b>}
+
+                <button
+                  type="button"
+                  onDragOver={(event) => { if (draggedItem && item.id) event.preventDefault() }}
+                  onDrop={(event) => { if (item.id) handleInternalDrop(event, item.id) }}
+                  onClick={() =>
+                    navigateBreadcrumb(index)
+                  }
+                >
+                  {item.nombre}
+                </button>
+              </span>
+            ))}
+          </div>
+          </div>
+          </div>
+          <div className="file-explorer-operations">
+          <div className="file-primary-actions">
+            <button className="file-action-primary" type="button" disabled={!currentFolderId || !!upload} onClick={() => void createTextFile()}>
+              <span aria-hidden="true">＋</span> Nuevo archivo
+            </button>
+            <button type="button" disabled={!!upload} onClick={createFolder}>
+              <span aria-hidden="true">＋</span> Nueva carpeta
+            </button>
+            <button type="button" disabled={!currentFolderId || !!upload} onClick={() => fileInput.current?.click()}>
+              <span aria-hidden="true">↑</span> Subir archivos
+            </button>
+          </div>
+          </div>
+          <div className="file-explorer-search">
+          <div className="file-header-search">
+        <input
+          className="search-box"
+          type="search"
+          placeholder="Buscar archivos y carpetas..."
+          value={search}
+          onChange={(event) =>
+            setSearch(event.target.value)
+          }
+        />
+          </div>
+
+
+          </div>
+        </div>
         <div className="explorer-header explorer-header-select">
           <span>
             <input
@@ -1233,7 +2054,7 @@ export default function FilesPage() {
             )}
           </button>
 
-          <span>Acciones</span>
+          <span> </span>
         </div>
 
         {loading ? (
@@ -1244,8 +2065,14 @@ export default function FilesPage() {
           <>
             {visibleFolders.map((folder) => (
               <div
-                className="explorer-row explorer-row-select"
+                className={`explorer-row explorer-row-select${moveClipboard?.sourceFolderId === currentFolderId && moveClipboard.folderIds.includes(folder.id) ? " explorer-row-cut" : ""}`}
                 key={folder.id}
+                onContextMenu={(event) => showContextMenu(event, 'folder', undefined, folder)}
+                {...touchMenu('folder', undefined, folder)}
+                draggable={!!currentFolderId && !moving && !upload}
+                onDragStart={(event) => handleInternalDragStart(event, 'folder', folder.id)}
+                onDragOver={(event) => { if (draggedItem) { event.preventDefault(); event.stopPropagation() } }}
+                onDrop={(event) => { handleInternalDrop(event, folder.id) }}
                 onDoubleClick={() =>
                   openFolder(folder)
                 }
@@ -1271,7 +2098,7 @@ export default function FilesPage() {
                   onClick={() => openFolder(folder)}
                 >
                   <span className="item-icon">
-                    📁
+                    <FolderGlyph />
                   </span>
                   {folder.nombre}
                 </button>
@@ -1285,33 +2112,18 @@ export default function FilesPage() {
                   )}
                 </span>
 
-                <div className="row-actions">
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      renameFolder(folder)
-                    }
-                  >
-                    Renombrar
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      deleteFolder(folder)
-                    }
-                  >
-                    Eliminar
-                  </button>
-                </div>
+                <button type="button" className="row-more" aria-label="Acciones de carpeta" onClick={(event) => showContextMenu(event, 'folder', undefined, folder)}>⋯</button>
               </div>
             ))}
 
             {visibleFiles.map((file) => (
               <div
-                className="explorer-row explorer-row-select"
+                className={`explorer-row explorer-row-select${moveClipboard?.sourceFolderId === currentFolderId && moveClipboard.fileIds.includes(file.id) ? " explorer-row-cut" : ""}`}
                 key={file.id}
+                onContextMenu={(event) => showContextMenu(event, 'file', file)}
+                {...touchMenu('file', file)}
+                draggable={!moving && !upload}
+                onDragStart={(event) => handleInternalDragStart(event, 'file', file.id)}
                 onDoubleClick={() =>
                   openFile(file)
                 }
@@ -1338,7 +2150,7 @@ export default function FilesPage() {
                   }}
                 >
                   <span className="item-icon">
-                    {fileIcon(file)}
+                    <FileGlyph extension={file.extension} />
                   </span>
 
                   {file.nombre}
@@ -1355,54 +2167,7 @@ export default function FilesPage() {
                   )}
                 </span>
 
-                <div className="row-actions">
-                  <button
-                    type="button"
-                    onClick={() => openFile(file)}
-                  >
-                    Abrir
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      downloadFile(file)
-                    }
-                  >
-                    Descargar
-                  </button>
-
-                  {[
-                    '.txt', '.md', '.json', '.xml', '.csv',
-                    '.html', '.css', '.js', '.ts', '.log',
-                  ].includes(file.extension.toLowerCase()) && (
-                    <button
-                      type="button"
-                      disabled={!!upload}
-                      onClick={() => void editTextFile(file)}
-                    >
-                      Editar
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      renameFile(file)
-                    }
-                  >
-                    Renombrar
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      deleteFile(file)
-                    }
-                  >
-                    Eliminar
-                  </button>
-                </div>
+                <button type="button" className="row-more" aria-label="Acciones de archivo" onClick={(event) => showContextMenu(event, 'file', file)}>⋯</button>
               </div>
             ))}
 
@@ -1417,8 +2182,91 @@ export default function FilesPage() {
           </>
         )}
       </div>
+      </div>
+      {contextMenu && (
+        <div ref={contextMenuRef} className="file-context-menu" role="menu"
+          style={{ left: Math.max(8, contextMenu.x), top: Math.max(8, contextMenu.y) }}
+          onClick={(event) => event.stopPropagation()}>
+          {(contextMenu.kind === 'background'
+            ? [{ id: 'paste', label: 'Pegar', disabled: (!moveClipboard && !copyClipboard) || !currentFolderId }, { id: 'new-folder', label: 'Nueva carpeta' }, { id: 'new-text-file', label: 'Nuevo archivo .txt', disabled: !currentFolderId }, { id: 'upload', label: 'Subir archivos', disabled: !currentFolderId }]
+            : [
+              { id: 'open', label: 'Abrir', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
+              ...((contextMenu.file || contextMenu.folder) ? [{ id: 'download', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 || !!contextMenu.folder ? 'Descargar ZIP' : 'Descargar', disabled: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 100 }] : []),
+              ...(contextMenu.file ? [{ id: 'versions', label: 'Historial de versiones', disabled: selectedCount > 1 && selectedFiles.has(contextMenu.file.id) }] : []),
+              ...(contextMenu.file && ['.txt', '.md', '.json', '.xml', '.csv', '.html', '.css', '.js', '.ts', '.log'].includes(contextMenu.file.extension.toLowerCase()) ? [{ id: 'edit', label: 'Editar', disabled: selectedFiles.has(contextMenu.file!.id) && selectedCount > 1 }] : []),
+              ...((contextMenu.file || (contextMenu.folder && !contextMenu.folder.deviceContainer)) ? [{ id: 'copy', label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Copiar selección (${selectedCount})` : 'Copiar' }] : []),
+              ...(currentFolderId ? [{ id: 'cut', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.folder?.deviceContainer || !!contextMenu.file?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && ([...selectedFolders].some(id => folders.some(folder => folder.id === id && folder.selectorManaged)) || [...selectedFiles].some(id => files.some(file => file.id === id && file.selectorManaged))), label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Cortar selección (${selectedCount})` : 'Cortar' }] : []),
+              ...(!contextMenu.folder || !contextMenu.folder.selectorManaged ? [
+                { id: 'rename', label: 'Renombrar', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.file?.selectorManaged || ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 },
+                { id: 'delete', disabled: !!contextMenu.folder?.selectorManaged || !!contextMenu.folder?.deviceContainer || !!contextMenu.file?.selectorManaged, label: ((contextMenu.file && selectedFiles.has(contextMenu.file.id)) || (contextMenu.folder && selectedFolders.has(contextMenu.folder.id))) && selectedCount > 1 ? `Mover selección a papelera (${selectedCount})` : 'Mover a papelera' },
+              ] : []),
+            ]).map((item) => (
+            <button key={item.id} type="button" role="menuitem"
+              disabled={('disabled' in item && item.disabled) || moving || !!upload}
+              onClick={() => contextAction(item.id)}>{item.label}</button>
+          ))}
+        </div>
+      )}
     </div>
   )
+}
+
+function FolderTree({ parentId, depth, refresh, activeId, onNavigate, onMove, onContext, ancestors = [] }: {
+  parentId: string | null
+  depth: number
+  refresh: number
+  activeId: string | null
+  onNavigate: (path: Breadcrumb[]) => void
+  onMove: (event: DragEvent<HTMLElement>, id: string) => boolean
+  onContext: (event: MouseEvent<HTMLElement>, folder: Folder) => void
+  ancestors?: Breadcrumb[]
+}) {
+  const [children, setChildren] = useState<Folder[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let live = true
+    const query = parentId ? `?parentId=${encodeURIComponent(parentId)}` : ''
+    void apiRequest<FolderContents>(`/folders${query}`).then((result) => {
+      if (live) setChildren(result.folders)
+    }).catch(() => { if (live) setChildren([]) })
+    return () => { live = false }
+  }, [parentId, refresh])
+  if (depth > 30) return null
+  return <div className="folder-tree">
+    {children.map((folder) => {
+      const path = [...ancestors, { id: folder.id, nombre: folder.nombre }]
+      const isOpen = expanded.has(folder.id)
+      return <div key={folder.id}>
+        <div className={`tree-entry ${activeId === folder.id ? 'tree-entry-active' : ''}`}
+          style={{ paddingLeft: depth * 14 + 6 }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => { onMove(event, folder.id) }}
+          onContextMenu={(event) => onContext(event, folder)}>
+          <button type="button" aria-label={isOpen ? 'Contraer' : 'Expandir'}
+            onClick={() => setExpanded((current) => {
+              const next = new Set(current)
+              if (next.has(folder.id)) next.delete(folder.id)
+              else next.add(folder.id)
+              return next
+            })}>{isOpen ? '▾' : '▸'}</button>
+          <button type="button" className="tree-label" onClick={() => onNavigate(path)}><FolderGlyph /> {folder.nombre}</button>
+        </div>
+        {isOpen && <FolderTree parentId={folder.id} depth={depth + 1} refresh={refresh}
+          activeId={activeId} onNavigate={onNavigate} onMove={onMove}
+          onContext={onContext} ancestors={path} />}
+      </div>
+    })}
+  </div>
+}
+
+function FolderGlyph() {
+  return <svg className="file-glyph folder-glyph" viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z" /></svg>
+}
+
+function FileGlyph({ extension }: { extension: string }) {
+  const ext = extension.toLowerCase()
+  const type = ext === '.pdf' ? 'pdf' : ['.jpg','.jpeg','.png','.gif','.webp'].includes(ext) ? 'image' : ['.doc','.docx'].includes(ext) ? 'word' : ['.xls','.xlsx','.csv'].includes(ext) ? 'sheet' : ['.ppt','.pptx'].includes(ext) ? 'slide' : ['.zip','.rar','.7z'].includes(ext) ? 'archive' : 'generic'
+  return <svg className={`file-glyph file-glyph-${type}`} viewBox="0 0 24 24" width="23" height="23" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5" /><path d="M9 13h6M9 17h6" /></svg>
 }
 
 function sortIndicator(
@@ -1463,40 +2311,6 @@ function formatDate(value: string) {
   }).format(date)
 }
 
-function fileIcon(file: FileItem) {
-  const extension = file.extension.toLowerCase()
-
-  if (extension === '.pdf') return '📕'
-
-  if (
-    [
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.gif',
-      '.webp',
-    ].includes(extension)
-  ) {
-    return '🖼️'
-  }
-
-  if (['.doc', '.docx'].includes(extension))
-    return '📘'
-
-  if (
-    ['.xls', '.xlsx', '.csv'].includes(extension)
-  )
-    return '📗'
-
-  if (['.ppt', '.pptx'].includes(extension))
-    return '📙'
-
-  if (['.zip', '.rar', '.7z'].includes(extension))
-    return '🗜️'
-
-  return '📄'
-}
-
 async function showFileError(error: unknown) {
   await Swal.fire({
     icon: 'error',
@@ -1509,4 +2323,13 @@ function getError(error: unknown) {
   return error instanceof Error
     ? error.message
     : 'Ocurrió un error inesperado.'
+}
+
+function escapeSyncHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }
+    return entities[character] ?? character
+  })
 }

@@ -11,16 +11,17 @@ type RegisterSyncDeviceResponse = {
   token: string
 }
 
-export async function activateSyncOnThisComputer(): Promise<void> {
+export async function activateSyncOnThisComputer(reuseDeviceId?: string, reuseDeviceName?: string): Promise<void> {
   const registration =
     await apiRequest<RegisterSyncDeviceResponse>(
       '/sync/devices/register',
       {
         method: 'POST',
         body: JSON.stringify({
-          name: window.navigator.userAgent.includes('Windows')
+          name: reuseDeviceName ?? (window.navigator.userAgent.includes('Windows')
             ? `Windows - ${window.location.hostname}`
-            : window.location.hostname,
+            : window.location.hostname),
+          reuseDeviceId,
           operatingSystem: 'Windows',
         }),
       },
@@ -31,7 +32,7 @@ export async function activateSyncOnThisComputer(): Promise<void> {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(registration),
+    body: JSON.stringify({ ...registration, startFresh: !reuseDeviceId }),
   })
 
   if (!response.ok) {

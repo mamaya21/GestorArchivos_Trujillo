@@ -8,6 +8,8 @@ export interface CurrentUser {
 }
 
 export interface Folder {
+  selectorManaged?: boolean
+  deviceContainer?: boolean
   id: string
   nombre: string
   carpetaPadreId: string | null
@@ -16,6 +18,7 @@ export interface Folder {
 }
 
 export interface FileItem {
+  selectorManaged?: boolean
   id: string
   nombre: string
   extension: string

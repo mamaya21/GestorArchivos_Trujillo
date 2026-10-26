@@ -63,6 +63,23 @@ public class FoldersController : ControllerBase
             }
         }
 
+        // Only the selector-managed ROOT is locked in the web UI.
+        // Descendant folders are synced items, not independently selected roots.
+        var protectedIds = (await (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join folder in _dbContext.Carpetas.AsNoTracking()
+                on item.CarpetaRemotaId equals folder.Id
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
+                  folder.CarpetaPadreId == device.CarpetaRaizId
+            select folder.Id
+        ).ToListAsync(cancellationToken)).ToHashSet();
+
+        var deviceContainerIds = (await _dbContext.DispositivosSync.AsNoTracking()
+            .Select(x => x.CarpetaRaizId)
+            .ToListAsync(cancellationToken)).ToHashSet();
+
         var candidateFolders = await _dbContext.Carpetas
             .AsNoTracking()
             .Where(x =>
@@ -90,9 +107,26 @@ public class FoldersController : ControllerBase
                     PermisoCarpeta.Leer,
                     cancellationToken))
             {
-                visibleFolders.Add(folder);
+                visibleFolders.Add(new
+                {
+                    folder.Id, folder.Nombre, folder.CarpetaPadreId,
+                    folder.FechaCreacion, folder.FechaModificacion,
+                    selectorManaged = protectedIds.Contains(folder.Id),
+                    deviceContainer = deviceContainerIds.Contains(folder.Id)
+                });
             }
         }
+
+        var protectedFileIds = (await (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join file in _dbContext.Archivos.AsNoTracking()
+                on item.ArchivoRemotoId equals file.Id
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Archivo &&
+                  file.CarpetaId == device.CarpetaRaizId
+            select file.Id
+        ).ToListAsync(cancellationToken)).ToHashSet();
 
         var files = parentId.HasValue
             ? await _dbContext.Archivos
@@ -119,7 +153,13 @@ public class FoldersController : ControllerBase
         {
             parentId,
             folders = visibleFolders,
-            files
+            files = files.Select(file => new
+            {
+                file.Id, file.Nombre, file.Extension, file.TipoContenido,
+                file.TamanoBytes, file.Version, file.FechaCreacion,
+                file.FechaModificacion,
+                selectorManaged = protectedFileIds.Contains(file.Id)
+            })
         });
     }
 
@@ -272,6 +312,20 @@ public class FoldersController : ControllerBase
         if (folder is null)
             return NotFound();
 
+        // A manually created top-level folder is not a protected sync root.
+        // Only the actual device container and selector-managed roots need
+        // special handling; the latter are blocked below.
+        var isDeviceContainer = await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.CarpetaRaizId == id, cancellationToken);
+
+        if (await IsSelectorManagedRootAsync(id, cancellationToken))
+            return Conflict(new { message = "El renombrado de esta raíz requiere actualizar primero el agente y el selector." });
+
+        // The device container is a server-side display name, not a local
+        // selected root. Renaming it must never rewrite Windows paths.
+        // Device containers are allowed through this rename endpoint; their
+        // sync item mappings remain unchanged because only Nombre is updated.
+
         if (!await _permissionService.HasPermissionAsync(
                 CurrentUserId(),
                 id,
@@ -302,11 +356,15 @@ public class FoldersController : ControllerBase
                     !x.EnPapelera,
                 cancellationToken);
 
-        if (duplicateExists)
+        var duplicateFileExists = await _dbContext.Archivos.AsNoTracking()
+            .AnyAsync(x => x.CarpetaId == folder.CarpetaPadreId &&
+                x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
+
+        if (duplicateExists || duplicateFileExists)
         {
             return Conflict(new
             {
-                message = "Ya existe una carpeta con ese nombre."
+                message = "Ya existe un archivo o carpeta con ese nombre en este nivel."
             });
         }
 
@@ -329,6 +387,90 @@ public class FoldersController : ControllerBase
         return NoContent();
     }
 
+    [HttpPut("{id:guid}/move")]
+    public async Task<IActionResult> Move(Guid id, MoveFolderRequest request, CancellationToken cancellationToken)
+    {
+        var folder = await _dbContext.Carpetas.FirstOrDefaultAsync(x => x.Id == id && !x.EnPapelera, cancellationToken);
+        if (folder is null) return NotFound();
+        if (await IsSelectorManagedRootAsync(id, cancellationToken))
+            return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
+
+        if (!folder.CarpetaPadreId.HasValue) return BadRequest(new { message = "No se puede mover una carpeta raíz." });
+        var destination = await _dbContext.Carpetas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.DestinationFolderId && !x.EnPapelera, cancellationToken);
+        if (destination is null) return NotFound(new { message = "La carpeta de destino no existe." });
+        if (folder.CarpetaPadreId == destination.Id) return NoContent();
+        var sourceRoot = await FindRootAsync(folder.Id, cancellationToken);
+        var destinationRoot = await FindRootAsync(destination.Id, cancellationToken);
+        if (!sourceRoot.HasValue || sourceRoot != destinationRoot)
+            return BadRequest(new { message = "No se permite mover elementos entre raíces distintas." });
+        var userId = CurrentUserId();
+        if (!await _permissionService.HasPermissionAsync(userId, folder.Id, PermisoCarpeta.Modificar, cancellationToken) ||
+            !await _permissionService.HasPermissionAsync(userId, folder.CarpetaPadreId.Value, PermisoCarpeta.Modificar, cancellationToken) ||
+            !await _permissionService.HasPermissionAsync(userId, destination.Id, PermisoCarpeta.Crear, cancellationToken)) return Forbid();
+        Guid? ancestor = destination.Id;
+        var visited = new HashSet<Guid>();
+        while (ancestor.HasValue)
+        {
+            if (!visited.Add(ancestor.Value) || ancestor.Value == id)
+                return BadRequest(new { message = "No se puede mover una carpeta dentro de sí misma o sus descendientes." });
+            ancestor = await _dbContext.Carpetas.AsNoTracking().Where(x => x.Id == ancestor.Value).Select(x => x.CarpetaPadreId).FirstOrDefaultAsync(cancellationToken);
+        }
+        // Conservar ambos genera un nombre disponible sin alterar el elemento existente.
+        // Omitir deja el origen intacto y permite continuar una selección múltiple.
+        async Task<bool> ExistsAsync(string name) =>
+            await _dbContext.Carpetas.AnyAsync(x => x.Id != id && x.CarpetaPadreId == destination.Id && x.Nombre == name && !x.EnPapelera, cancellationToken) ||
+            await _dbContext.Archivos.AnyAsync(x => x.Id != id && x.CarpetaId == destination.Id && x.Nombre == name && x.Estado == EstadoArchivo.Activo, cancellationToken);
+
+        var finalName = folder.Nombre;
+        if (await ExistsAsync(finalName))
+        {
+            if (request.ConflictResolution == "skip")
+                return Ok(new { skipped = true });
+
+            if (request.ConflictResolution != "keepBoth")
+                return Conflict(new { message = "Ya existe un elemento con ese nombre en el destino." });
+
+            var extension = string.Empty;
+            var stem = finalName;
+            var found = false;
+            for (var suffix = 1; suffix <= 10000; suffix++)
+            {
+                var candidate = $"{stem} ({suffix}){extension}";
+                if (!FileNameValidator.TryValidate(candidate, out _, out _))
+                    return Conflict(new { message = "No se pudo generar un nombre válido." });
+                if (await ExistsAsync(candidate)) continue;
+                finalName = candidate;
+                found = true;
+                break;
+            }
+            if (!found)
+                return Conflict(new { message = "No hay un nombre disponible en el destino." });
+        }
+        folder.Nombre = finalName;
+        var oldParentId = folder.CarpetaPadreId.Value;
+        folder.CarpetaPadreId = destination.Id;
+        folder.FechaModificacion = DateTime.UtcNow;
+        await _syncChangeService.RegisterAsync(oldParentId, null, folder.Id, "FOLDER_MOVED", cancellationToken: cancellationToken);
+        await _syncChangeService.RegisterAsync(destination.Id, null, folder.Id, "FOLDER_MOVED", cancellationToken: cancellationToken);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    private async Task<bool> IsSelectorManagedRootAsync(Guid folderId, CancellationToken cancellationToken)
+    {
+        return await (
+            from item in _dbContext.ElementosSync.AsNoTracking()
+            join device in _dbContext.DispositivosSync.AsNoTracking()
+                on item.DispositivoId equals device.Id
+            join folder in _dbContext.Carpetas.AsNoTracking()
+                on item.CarpetaRemotaId equals folder.Id
+            where device.Activo && item.Activo && item.Tipo == TipoElementoSync.Carpeta &&
+                  folder.Id == folderId &&
+                  folder.CarpetaPadreId == device.CarpetaRaizId
+            select item.Id
+        ).AnyAsync(cancellationToken);
+    }
+
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> MoveToTrash(
         Guid id,
@@ -343,6 +485,15 @@ public class FoldersController : ControllerBase
 
         if (folder is null)
             return NotFound();
+
+        if (!folder.CarpetaPadreId.HasValue && await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.CarpetaRaizId == id, cancellationToken))
+            return BadRequest(new { message = "No se puede enviar a papelera la carpeta del dispositivo." });
+
+        if (await IsSelectorManagedRootAsync(id, cancellationToken))
+            return Conflict(new { message = "Esta carpeta sincronizada se administra exclusivamente desde el selector de este dispositivo." });
+
+
 
         var userId = CurrentUserId();
 
@@ -442,6 +593,23 @@ public class FoldersController : ControllerBase
 
         return userId;
     }
+    private async Task<Guid?> FindRootAsync(Guid folderId, CancellationToken cancellationToken)
+    {
+        var visited = new HashSet<Guid>();
+        var current = folderId;
+        while (visited.Add(current))
+        {
+            var folder = await _dbContext.Carpetas.AsNoTracking()
+                .Where(x => x.Id == current && !x.EnPapelera)
+                .Select(x => new { x.Id, x.CarpetaPadreId })
+                .FirstOrDefaultAsync(cancellationToken);
+            if (folder is null) return null;
+            if (!folder.CarpetaPadreId.HasValue) return folder.Id;
+            current = folder.CarpetaPadreId.Value;
+        }
+        return null;
+    }
+
 }
 
 public sealed record CreateFolderRequest(
@@ -450,3 +618,4 @@ public sealed record CreateFolderRequest(
 
 public sealed record RenameFolderRequest(
     string Name);
+public sealed record MoveFolderRequest(Guid DestinationFolderId, string? ConflictResolution = null);
