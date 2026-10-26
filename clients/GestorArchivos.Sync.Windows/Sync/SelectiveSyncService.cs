@@ -93,7 +93,7 @@ public sealed class SelectiveSyncService
     {
         var selections = await LoadSelectionsAsync(cancellationToken);
         await ProcessRemovalRequestsAsync(selections, cancellationToken);
-
+        await _mapping.ReconcileRemovedRootSelectionsAsync(cancellationToken);
 
         var previousFingerprint = File.Exists(SelectionGuardPath)
             ? await File.ReadAllTextAsync(SelectionGuardPath, cancellationToken)
