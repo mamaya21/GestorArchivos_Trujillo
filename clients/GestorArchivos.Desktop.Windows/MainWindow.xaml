@@ -162,7 +162,13 @@
                     <Border Grid.Row="1" BorderBrush="#E1E4ED" BorderThickness="1" CornerRadius="8">
                         <ListView x:Name="ItemsList" BorderThickness="0" Background="Transparent"
                                   MouseDoubleClick="ItemsList_DoubleClick" SelectionMode="Extended"
-                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">\n                            <ListView.ContextMenu>\n                                <ContextMenu>\n                                    <MenuItem Header="Renombrar" Click="Rename_Click"/>\n                                    <MenuItem Header="Mover a papelera" Click="Delete_Click"/>\n                                </ContextMenu>\n                            </ListView.ContextMenu>
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <ListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Renombrar" Click="Rename_Click"/>
+                                    <MenuItem Header="Mover a papelera" Click="Delete_Click"/>
+                                </ContextMenu>
+                            </ListView.ContextMenu>
                             <ListView.View>
                                 <GridView>
                                     <GridViewColumn Header="NOMBRE" Width="490">
