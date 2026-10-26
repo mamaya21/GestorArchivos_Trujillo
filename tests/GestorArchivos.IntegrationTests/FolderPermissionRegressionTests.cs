@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore;
 using GestorArchivos.Domain.Security;
 using GestorArchivos.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
@@ -102,6 +104,64 @@ public sealed class FolderPermissionRegressionTests
             form.Add(content, "file", "read-only.txt");
             form.Add(new StringContent(syncRoot.ToString()), "folderId");
             await Status(sync.PostAsync("/api/sync/files", form), HttpStatusCode.Forbidden);
+        }
+        // Create a real file while creation is permitted, then revoke modification.
+        await Success(admin.PutAsJsonAsync(syncPermissionRoute,
+            new { permissions = (int)PermisoCarpeta.Crear, inheritToSubfolders = true }));
+        const string originalContent = "contenido original protegido";
+        Guid protectedFileId;
+        using (var form = new MultipartFormDataContent())
+        {
+            using var content = new ByteArrayContent(Encoding.UTF8.GetBytes(originalContent));
+            content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+            form.Add(content, "file", "protected.txt");
+            form.Add(new StringContent(syncRoot.ToString()), "folderId");
+            using var createdFile = await sync.PostAsync("/api/sync/files", form);
+            await EnsureSuccess(createdFile);
+            using var createdJson = JsonDocument.Parse(
+                await createdFile.Content.ReadAsStringAsync());
+            protectedFileId = createdJson.RootElement.GetProperty("id").GetGuid();
+        }
+
+        long originalVersion;
+        string originalHash;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var original = await db.Archivos.AsNoTracking()
+                .SingleAsync(x => x.Id == protectedFileId);
+            originalVersion = original.Version;
+            originalHash = original.HashSha256;
+        }
+
+        await Success(admin.PutAsJsonAsync(syncPermissionRoute,
+            new { permissions = (int)PermisoCarpeta.Leer, inheritToSubfolders = true }));
+
+        using (var modifiedContent = new ByteArrayContent(
+            Encoding.UTF8.GetBytes("contenido no autorizado")))
+        {
+            modifiedContent.Headers.ContentType =
+                new MediaTypeHeaderValue("application/octet-stream");
+            await Status(sync.PutAsync(
+                $"/api/sync/files/{protectedFileId}/content?expectedVersion={originalVersion}&expectedHash={originalHash}",
+                modifiedContent), HttpStatusCode.Forbidden);
+        }
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var unchanged = await db.Archivos.AsNoTracking()
+                .SingleAsync(x => x.Id == protectedFileId);
+            Assert.Equal(originalVersion, unchanged.Version);
+            Assert.Equal(originalHash, unchanged.HashSha256);
+            Assert.Equal(Encoding.UTF8.GetByteCount(originalContent), unchanged.TamanoBytes);
+        }
+
+        using (var download = await admin.GetAsync(
+            $"/api/files/{protectedFileId}/download"))
+        {
+            await EnsureSuccess(download);
+            Assert.Equal(originalContent, await download.Content.ReadAsStringAsync());
         }
         await Success(admin.DeleteAsync(syncPermissionRoute));
 
