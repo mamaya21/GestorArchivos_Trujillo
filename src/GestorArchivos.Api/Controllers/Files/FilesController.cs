@@ -731,6 +731,77 @@ public class FilesController : ControllerBase
             : safe;
     }
 
+    // Actualización desde aplicaciones nativas: control optimista de versión.
+    // Se conserva la versión anterior y se registra el cambio para Sync.
+    [HttpPut("{id:guid}/desktop-content")]
+    [RequestSizeLimit(MaxFileSize)]
+    public async Task<IActionResult> UpdateDesktopContent(
+        Guid id,
+        [FromForm] IFormFile file,
+        [FromForm] int expectedVersion,
+        CancellationToken cancellationToken)
+    {
+        if (file is null || file.Length > MaxFileSize || expectedVersion < 1)
+            return BadRequest(new { message = "Contenido o versión inválidos." });
+
+        var userId = CurrentUserId();
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, cancellationToken);
+
+        var entity = await _dbContext.Archivos.FirstOrDefaultAsync(
+            x => x.Id == id && x.Estado == EstadoArchivo.Activo, cancellationToken);
+        if (entity is null) return NotFound();
+
+        if (!await _permissionService.HasPermissionAsync(
+            userId, entity.CarpetaId, PermisoCarpeta.Modificar, cancellationToken))
+            return Forbid();
+
+        if (entity.Version != expectedVersion)
+            return Conflict(new { message = "El archivo cambió en el servidor. Conserva tu copia local y actualiza antes de reintentar.", currentVersion = entity.Version });
+
+        var newPath = Path.Combine(DateTime.UtcNow.ToString("yyyy"),
+            DateTime.UtcNow.ToString("MM"),
+            $"{Guid.NewGuid():N}{Path.GetExtension(entity.Nombre)}");
+
+        await using var source = file.OpenReadStream();
+        using var sha = SHA256.Create();
+        var hash = Convert.ToHexString(await sha.ComputeHashAsync(source, cancellationToken));
+        source.Position = 0;
+
+        if (string.Equals(hash, entity.HashSha256, StringComparison.OrdinalIgnoreCase))
+            return Ok(new { entity.Id, entity.Version, unchanged = true });
+
+        await _fileStorage.SaveAsync(newPath, source, cancellationToken);
+        try
+        {
+            _dbContext.ArchivoVersiones.Add(new ArchivoVersion
+            {
+                ArchivoId = entity.Id,
+                Numero = entity.Version,
+                NombreFisico = entity.NombreFisico,
+                HashSha256 = entity.HashSha256,
+                TamanoBytes = entity.TamanoBytes,
+                TipoContenido = entity.TipoContenido,
+                UsuarioId = userId
+            });
+            entity.NombreFisico = newPath;
+            entity.HashSha256 = hash;
+            entity.TamanoBytes = file.Length;
+            entity.Version++;
+            entity.FechaModificacion = DateTime.UtcNow;
+            await _syncChangeService.RegisterAsync(entity.CarpetaId, entity.Id, null,
+                "FILE_UPDATED", entity.Version, cancellationToken: cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Ok(new { entity.Id, entity.Version });
+        }
+        catch
+        {
+            await _fileStorage.DeleteAsync(newPath, CancellationToken.None);
+            throw;
+        }
+    }
+
     [HttpGet("{id:guid}/download")]
     public async Task<IActionResult> Download(
         Guid id,
