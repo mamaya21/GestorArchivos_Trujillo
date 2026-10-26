@@ -121,32 +121,48 @@
                 <Grid x:Name="ExplorerPanel" Visibility="Collapsed" Margin="19,18">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <DockPanel Margin="0,0,0,16">
-                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                            <Button Content="⌂  Inicio" Click="Home_Click"/>
-                            <Button Content="←  Atrás" Click="Back_Click"/>
-                            <Button Content="↻  Actualizar" Click="Refresh_Click"/>
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*" MinWidth="110"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="←" ToolTip="Atrás" Click="Back_Click" Padding="12,9"/>
+                            <Button Content="⌂" ToolTip="Inicio" Click="Home_Click" Padding="12,9"/>
+                            <Button Content="↻" ToolTip="Actualizar" Click="Refresh_Click" Padding="12,9"/>
                         </StackPanel>
-                        <Button Content="Cerrar sesión" Click="Logout_Click"
-                                HorizontalAlignment="Right" Margin="0"/>
-                    </DockPanel>
-                    <DockPanel Grid.Row="1" Margin="0,0,0,17">
-                        <StackPanel Orientation="Horizontal">
-                            <Button Content="＋  Nueva carpeta" Click="NewFolder_Click"
-                                    Background="{StaticResource Accent}" Foreground="White" BorderThickness="0"/>
-                            <Button Content="↑  Subir archivos" Click="Upload_Click"
-                                    Background="{StaticResource Accent}" Foreground="White" BorderThickness="0"/>
-                            <Button Content="✎  Renombrar" Click="Rename_Click"/>
-                            <Button Content="▤  Eliminar" Click="Delete_Click"/>
-                        </StackPanel>
-                    </DockPanel>
-                    <Border Grid.Row="2" BorderBrush="#E1E4ED" BorderThickness="1" CornerRadius="8">
+                        <TextBlock x:Name="BreadcrumbText" Grid.Column="1" Text="Inicio"
+                                   Foreground="#314566" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" Margin="6,0,15,0"/>
+                        <ScrollViewer Grid.Column="2" HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Disabled" MaxWidth="790">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Content="＋  Nuevo archivo" Click="NewFile_Click"
+                                        Background="#1D4DEB" Foreground="White" BorderThickness="0"/>
+                                <Button Content="＋  Nueva carpeta" Click="NewFolder_Click"/>
+                                <Button Content="↑  Subir archivos" Click="Upload_Click"/>
+                                <Border BorderBrush="#D8DEEB" BorderThickness="1" CornerRadius="7"
+                                        Background="#FAFBFF" Width="220" Height="39" Margin="4,0,0,0">
+                                    <Grid>
+                                        <TextBox x:Name="SearchBox" BorderThickness="0" Background="Transparent"
+                                                 VerticalContentAlignment="Center" Padding="10,0"
+                                                 TextChanged="SearchBox_TextChanged"
+                                                 ToolTip="Buscar archivos y carpetas"
+                                                 />
+                                    </Grid>
+                                </Border>
+                                <Button Content="Salir" ToolTip="Cerrar sesión" Click="Logout_Click"
+                                        Margin="10,0,0,0"/>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                    <Border Grid.Row="1" BorderBrush="#E1E4ED" BorderThickness="1" CornerRadius="8">
                         <ListView x:Name="ItemsList" BorderThickness="0" Background="Transparent"
                                   MouseDoubleClick="ItemsList_DoubleClick" SelectionMode="Extended"
-                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">\n                            <ListView.ContextMenu>\n                                <ContextMenu>\n                                    <MenuItem Header="Renombrar" Click="Rename_Click"/>\n                                    <MenuItem Header="Mover a papelera" Click="Delete_Click"/>\n                                </ContextMenu>\n                            </ListView.ContextMenu>
                             <ListView.View>
                                 <GridView>
                                     <GridViewColumn Header="NOMBRE" Width="490">
