@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using GestorArchivos.Domain.Security;
 using GestorArchivos.Infrastructure.Identity;
@@ -75,6 +77,33 @@ public sealed class FolderPermissionRegressionTests
         Assert.Equal((int)PermisoCarpeta.Leer, await Effective(admin, effectiveChild));
         await Success(user.GetAsync($"/api/folders?parentId={child}"));
         await RejectedWrite(user, child);
+
+        // Device Sync must reject file creation with read-only permissions.
+        using var registration = await user.PostAsJsonAsync(
+            "/api/sync/devices/register",
+            new { name = $"ACL-{Guid.NewGuid():N}", operatingSystem = "Windows" });
+        await EnsureSuccess(registration);
+        using var registrationJson = JsonDocument.Parse(
+            await registration.Content.ReadAsStringAsync());
+        var token = registrationJson.RootElement.GetProperty("token").GetString();
+        var syncRoot = registrationJson.RootElement.GetProperty("rootFolderId").GetGuid();
+        Assert.False(string.IsNullOrWhiteSpace(token));
+        var syncPermissionRoute =
+            $"/api/admin/folders/{syncRoot}/permissions/users/{userId}";
+        await Success(admin.PutAsJsonAsync(syncPermissionRoute,
+            new { permissions = (int)PermisoCarpeta.Leer, inheritToSubfolders = true }));
+        using var sync = Client();
+        sync.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+        using (var form = new MultipartFormDataContent())
+        {
+            using var content = new ByteArrayContent(Encoding.UTF8.GetBytes("denegado"));
+            content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+            form.Add(content, "file", "read-only.txt");
+            form.Add(new StringContent(syncRoot.ToString()), "folderId");
+            await Status(sync.PostAsync("/api/sync/files", form), HttpStatusCode.Forbidden);
+        }
+        await Success(admin.DeleteAsync(syncPermissionRoute));
 
         // Removing inheritance removes the descendant grant, but not the parent's.
         await Success(admin.PutAsJsonAsync(userRoute,
