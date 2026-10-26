@@ -212,6 +212,26 @@ public partial class MainWindow : Window
                 localHash = Convert.ToHexString(await SHA256.HashDataAsync(local));
             }
 
+            // If the cached copy still matches the last confirmed server version,
+            // it has no pending local edits: safely refresh it instead of showing
+            // a false conflict whenever Sync or another client updates the server.
+            var baseline = DesktopCacheState.Read(path);
+            if (localHash is not null &&
+                !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase) &&
+                baseline is { } confirmed &&
+                string.Equals(localHash, confirmed.Hash, StringComparison.OrdinalIgnoreCase))
+            {
+                await DownloadServerCopyAsync(item.Id, path);
+                localHash = null;
+                await using var refreshed = new FileStream(path, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete);
+                localHash = Convert.ToHexString(await SHA256.HashDataAsync(refreshed));
+                if (!string.IsNullOrEmpty(serverHash) &&
+                    !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("La actualización del documento no coincide con el servidor.");
+                DesktopCacheState.Write(path, localHash, serverVersion);
+            }
+
             if (localHash is not null &&
                 !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
             {
@@ -258,7 +278,11 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrEmpty(serverHash) &&
                     !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("La descarga no coincide con el archivo del servidor.");
+                DesktopCacheState.Write(path, localHash, serverVersion);
             }
+
+            if (baseline is null && localHash is not null)
+                DesktopCacheState.Write(path, localHash, serverVersion);
 
             var session = new DesktopEditSession(_http, item.Id, path, serverVersion,
                 localHash, message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
