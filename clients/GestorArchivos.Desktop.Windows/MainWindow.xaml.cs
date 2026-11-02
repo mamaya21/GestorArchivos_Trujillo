@@ -306,7 +306,8 @@ public partial class MainWindow : Window
                 DesktopCacheState.Write(path, localHash, serverVersion);
 
             var session = new DesktopEditSession(_http, item.Id, path, serverVersion,
-                localHash, message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
+                localHash ?? throw new IOException("No se pudo verificar el archivo local."),
+                message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
             _editSessions[item.Id] = session;
             try
             {
