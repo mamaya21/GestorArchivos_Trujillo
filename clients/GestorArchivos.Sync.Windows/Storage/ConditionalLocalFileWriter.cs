@@ -94,7 +94,7 @@ public static class ConditionalLocalFileWriter
                 // Office mantiene bloqueos exclusivos mientras guarda.
                 // No reemplazar ni considerar el archivo como modificado.
                 // La siguiente pasada de sincronización volverá a intentarlo.
-                return false;
+                throw new LocalFileBusyException(destinationPath, ex);
             }
 
             await using (original)
@@ -114,11 +114,18 @@ public static class ConditionalLocalFileWriter
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                File.Replace(
-                    temporaryPath,
-                    destinationPath,
-                    backupPath,
-                    ignoreMetadataErrors: false);
+                try
+                {
+                    File.Replace(
+                        temporaryPath,
+                        destinationPath,
+                        backupPath,
+                        ignoreMetadataErrors: false);
+                }
+                catch (IOException ex) when ((ex.HResult & 0xFFFF) is 32 or 33)
+                {
+                    throw new LocalFileBusyException(destinationPath, ex);
+                }
 
                 return true;
             }
