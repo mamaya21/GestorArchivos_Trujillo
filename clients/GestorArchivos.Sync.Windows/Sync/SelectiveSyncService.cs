@@ -1856,9 +1856,19 @@ public sealed class SelectiveSyncService
                     $"Asociación remota diferente: '{localPath}'.");
             }
 
-            await ReconcileFileAsync(
-                fileItem,
-                cancellationToken);
+            try
+            {
+                await ReconcileFileAsync(
+                    fileItem,
+                    cancellationToken);
+            }
+            catch (LocalFileBusyException)
+            {
+                // Excel u otra aplicación mantiene el archivo abierto.
+                // Posponer solo este archivo; continuar con los demás.
+                // El próximo ciclo volverá a reconciliarlo.
+                continue;
+            }
         }
 
         // Obtener el estado remoto actualizado antes de procesar
