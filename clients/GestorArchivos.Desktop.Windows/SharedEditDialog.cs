@@ -36,14 +36,14 @@ internal static class SharedEditDialog
             var button = new Button { Content = title, Padding = new Thickness(18, 11, 18, 11), Margin = new Thickness(0, 0, 9, 0), MinWidth = 112, IsDefault = primary, Cursor = System.Windows.Input.Cursors.Hand, FontWeight = FontWeights.SemiBold, Background = primary ? new SolidColorBrush(Color.FromRgb(29, 78, 235)) : Brushes.White, Foreground = primary ? Brushes.White : new SolidColorBrush(Color.FromRgb(31, 41, 65)), BorderBrush = new SolidColorBrush(Color.FromRgb(222, 228, 240)), BorderThickness = primary ? new Thickness(0) : new Thickness(1) };
             var template = new ControlTemplate(typeof(Button));
             var chrome = new FrameworkElementFactory(typeof(Border));
-            chrome.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Button.BackgroundProperty));
-            chrome.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Button.BorderBrushProperty));
-            chrome.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Button.BorderThicknessProperty));
+            chrome.SetBinding(Border.BackgroundProperty, new Binding(nameof(Button.Background)) { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+            chrome.SetBinding(Border.BorderBrushProperty, new Binding(nameof(Button.BorderBrush)) { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
+            chrome.SetBinding(Border.BorderThicknessProperty, new Binding(nameof(Button.BorderThickness)) { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
             chrome.SetValue(Border.CornerRadiusProperty, new CornerRadius(8));
             var content = new FrameworkElementFactory(typeof(ContentPresenter));
             content.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             content.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            content.SetValue(ContentPresenter.MarginProperty, new TemplateBindingExtension(Button.PaddingProperty));
+            content.SetBinding(ContentPresenter.MarginProperty, new Binding(nameof(Button.Padding)) { RelativeSource = new RelativeSource(RelativeSourceMode.TemplatedParent) });
             chrome.AppendChild(content);
             template.VisualTree = chrome;
             button.Template = template;
