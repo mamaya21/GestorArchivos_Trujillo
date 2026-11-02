@@ -1,10 +1,13 @@
 <Window x:Class="GestorArchivos.Desktop.Windows.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:GestorArchivos.Desktop.Windows"
         Title="Gestor Archivos" Width="1250" Height="790" MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen" Background="#F7F8FC"
         FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
+        <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolVisibility"/>
         <SolidColorBrush x:Key="Ink" Color="#1F2941"/>
         <SolidColorBrush x:Key="Muted" Color="#697389"/>
         <SolidColorBrush x:Key="Accent" Color="#6957D8"/>
@@ -175,8 +178,17 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Text="{Binding Icon}" FontFamily="Segoe UI Emoji"
-                                                               FontSize="19" Margin="2,0,12,0" Width="28"/>
+                                                    <Border Width="34" Height="34" CornerRadius="9"
+                                                            Background="{Binding IconBackground}" Margin="2,0,12,0">
+                                                        <Grid Width="21" Height="21">
+                                                            <Path Fill="{Binding IconColor}"
+                                                                  Data="M2,5 L8,5 10,8 20,8 Q22,8 22,10 L22,19 Q22,21 20,21 L3,21 Q1,21 1,19 L1,7 Q1,5 2,5 Z"
+                                                                  Stretch="Uniform" Visibility="{Binding IsFolder, Converter={StaticResource BoolVisibility}}"/>
+                                                            <Path Fill="{Binding IconColor}"
+                                                                  Data="M5,2 L15,2 21,8 21,22 5,22 Z M14,3 L14,9 20,9"
+                                                                  Stretch="Uniform" Visibility="{Binding IsFolder, Converter={StaticResource InverseBoolVisibility}}"/>
+                                                        </Grid>
+                                                    </Border>
                                                     <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
                                                                Foreground="{StaticResource Ink}"/>
                                                 </StackPanel>
