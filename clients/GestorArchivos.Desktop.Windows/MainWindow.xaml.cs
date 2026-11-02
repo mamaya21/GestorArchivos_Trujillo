@@ -275,13 +275,24 @@ public partial class MainWindow : Window
 
                 if (choice == MessageBoxResult.No)
                 {
-                    var serverCopy = Path.Combine(directory, "VersionServidor",
-                        Path.GetFileName(item.Name));
-                    Directory.CreateDirectory(Path.GetDirectoryName(serverCopy)!);
-                    await DownloadServerCopyAsync(item.Id, serverCopy);
-                    Process.Start(new ProcessStartInfo(serverCopy) { UseShellExecute = true });
-                    StatusText.Text = "Versión del servidor abierta. Tu copia local permanece intacta.";
-                    return;
+                    // Archive the unsynced legacy cache before adopting the
+                    // current server version as the actively monitored copy.
+                    var backupFolder = Path.Combine(directory, "CopiasLocales");
+                    Directory.CreateDirectory(backupFolder);
+                    var backup = Path.Combine(backupFolder,
+                        DateTime.UtcNow.ToString("yyyyMMddHHmmssfff") + "-" + Path.GetFileName(item.Name));
+                    File.Copy(path, backup, false);
+                    await DownloadServerCopyAsync(item.Id, path);
+                    await using (var refreshed = new FileStream(path, FileMode.Open,
+                        FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        localHash = Convert.ToHexString(await SHA256.HashDataAsync(refreshed));
+                    }
+                    if (!string.IsNullOrEmpty(serverHash) &&
+                        !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("La descarga no coincide con el servidor.");
+                    DesktopCacheState.Write(path, localHash, serverVersion);
+                    StatusText.Text = "Copia anterior conservada en CopiasLocales. Abriendo versión actual supervisada.";
                 }
 
                 // No asumir que la copia local pertenece a la versión actual:
