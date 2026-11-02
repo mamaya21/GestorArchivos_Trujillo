@@ -257,23 +257,15 @@ public partial class MainWindow : Window
             if (localHash is not null &&
                 !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
             {
-                var choice = MessageBox.Show(
-                    "La copia guardada en este equipo es diferente de la versión del servidor.\n\n" +
-                    "Sí: continuar con mi copia local.\n" +
-                    "No: abrir la versión del servidor sin borrar mi copia local.\n" +
-                    "Cancelar: no abrir ningún archivo.\n\n" +
-                    "Tus cambios locales se conservarán en todos los casos.",
-                    "Selecciona qué versión abrir",
-                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question,
-                    MessageBoxResult.Cancel);
+                var choice = SharedEditDialog.Show(this, item.Name);
 
-                if (choice == MessageBoxResult.Cancel)
+                if (choice == SharedEditChoice.Cancel)
                 {
                     StatusText.Text = _folderStatus;
                     return;
                 }
 
-                if (choice == MessageBoxResult.No)
+                if (choice == SharedEditChoice.Continue)
                 {
                     // Archive the unsynced legacy cache before adopting the
                     // current server version as the actively monitored copy.
