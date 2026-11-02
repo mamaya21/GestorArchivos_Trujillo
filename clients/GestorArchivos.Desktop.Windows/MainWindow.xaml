@@ -3,14 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:GestorArchivos.Desktop.Windows"
         Title="Gestor Archivos" Width="1250" Height="790" MinWidth="900" MinHeight="600"
-        WindowStartupLocation="CenterScreen" Background="#F7F8FC"
+        WindowStartupLocation="CenterScreen" Background="#F4F7FC"
         FontFamily="Segoe UI" FontSize="13">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolVisibility"/>
         <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolVisibility"/>
         <SolidColorBrush x:Key="Ink" Color="#1F2941"/>
         <SolidColorBrush x:Key="Muted" Color="#697389"/>
-        <SolidColorBrush x:Key="Accent" Color="#6957D8"/>
+        <SolidColorBrush x:Key="Accent" Color="#2456E8"/>
         <Style TargetType="Button">
             <Setter Property="Background" Value="White"/>
             <Setter Property="Foreground" Value="{StaticResource Ink}"/>
@@ -25,7 +25,7 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Chrome" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7">
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                               Margin="{TemplateBinding Padding}"/>
                         </Border>
@@ -56,14 +56,14 @@
             <Setter Property="FontSize" Value="14"/>
         </Style>
         <Style TargetType="ListViewItem">
-            <Setter Property="Padding" Value="6,9"/>
+            <Setter Property="Padding" Value="9,7"/>
             <Setter Property="Foreground" Value="{StaticResource Ink}"/>
             <Setter Property="BorderThickness" Value="0,0,0,1"/>
             <Setter Property="BorderBrush" Value="#F0F1F7"/>
             <Style.Triggers>
                 <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#EDEAFF"/>
-                    <Setter Property="Foreground" Value="#4735B5"/>
+                    <Setter Property="Background" Value="#EAF1FF"/>
+                    <Setter Property="Foreground" Value="#2456E8"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -81,18 +81,18 @@
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="Gestor de Archivos" FontSize="26" FontWeight="Bold" Foreground="{StaticResource Ink}"/>
-                <TextBlock Text="Tus documentos, organizados y disponibles desde Windows."
+                <TextBlock Text="Explora, comparte y mantén tus documentos sincronizados."
                            Foreground="{StaticResource Muted}" Margin="1,6,0,18"/>
             </StackPanel>
-            <Border Grid.Column="1" Background="#EEEAFE" CornerRadius="18"
+            <Border Grid.Column="1" Background="#E8F0FF" CornerRadius="18"
                     Padding="16,8" VerticalAlignment="Top" Margin="0,5,0,0">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="●" Foreground="{StaticResource Accent}" Margin="0,0,8,0"/>
-                    <TextBlock x:Name="UserLabel" Foreground="#4735B5" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="UserLabel" Foreground="#2456E8" FontWeight="SemiBold"/>
                 </StackPanel>
             </Border>
         </Grid>
-        <Border Grid.Row="1" Background="White" CornerRadius="12" BorderBrush="#E1E4ED" BorderThickness="1">
+        <Border Grid.Row="1" Background="White" CornerRadius="16" BorderBrush="#DFE6F2" BorderThickness="1">
             <Grid>
                 <Border x:Name="LoginPanel" Background="White" CornerRadius="12"
                         HorizontalAlignment="Center" VerticalAlignment="Center" Width="420" Padding="28">
@@ -144,7 +144,7 @@
                                       VerticalScrollBarVisibility="Disabled" MaxWidth="790">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <Button Content="＋  Nuevo archivo" Click="NewFile_Click"
-                                        Background="#1D4DEB" Foreground="White" BorderThickness="0"/>
+                                        Background="#2456E8" Foreground="White" BorderThickness="0"/>
                                 <Button Content="＋  Nueva carpeta" Click="NewFolder_Click"/>
                                 <Button Content="↑  Subir archivos" Click="Upload_Click"/>
                                 <Border BorderBrush="#D8DEEB" BorderThickness="1" CornerRadius="7"
@@ -162,7 +162,7 @@
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
-                    <Border Grid.Row="1" BorderBrush="#E1E4ED" BorderThickness="1" CornerRadius="8">
+                    <Border Grid.Row="1" BorderBrush="#E5EBF5" BorderThickness="1" CornerRadius="10">
                         <ListView x:Name="ItemsList" BorderThickness="0" Background="Transparent"
                                   MouseDoubleClick="ItemsList_DoubleClick" SelectionMode="Extended"
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
