@@ -31,6 +31,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     private readonly SyncOptions _options;
 
     private readonly SemaphoreSlim _syncGate = new(1, 1);
+    private readonly SelectiveWakeSignal _selectiveWakeup = new();
 
     private CancellationToken _stoppingToken;
     private bool _monitorStarted;
@@ -226,6 +227,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
                         if (HasConfiguredSelections())
                         {
+                            _selectiveWakeup.Configure(SelectionsPath);
                             await _selectiveSyncService.ExecuteAsync(
                                 cancellationToken);
                         }
@@ -392,9 +394,10 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     {
         try
         {
-            await Task.Delay(
-                TimeSpan.FromSeconds(_options.PollIntervalSeconds),
-                cancellationToken);
+            if (HasConfiguredSelections() && !File.Exists(PausePath))
+                await _selectiveWakeup.WaitAsync(TimeSpan.FromSeconds(_options.PollIntervalSeconds), cancellationToken);
+            else
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), cancellationToken);
         }
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
@@ -408,6 +411,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
             return;
 
         _disposed = true;
+        _selectiveWakeup.Dispose();
         _runtimeState.IsOnline = false;
 
         if (_monitorStarted)
