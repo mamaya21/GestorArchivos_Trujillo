@@ -15,7 +15,7 @@ internal static class SharedEditDialog
         var dialog = new Window
         {
             Owner = owner, Title = "Abrir archivo compartido",
-            Width = 565, Height = 292, MinWidth = 520,
+            Width = 565, Height = 345, MinWidth = 520, MinHeight = 345,
             ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = Brushes.White, ShowInTaskbar = false
         };
