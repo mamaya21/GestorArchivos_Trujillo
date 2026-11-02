@@ -186,7 +186,7 @@ public partial class MainWindow : Window
         {
             if (_editSessions.TryGetValue(item.Id, out var existing))
             {
-                existing.CheckForChanges();
+                await RefreshExistingEditAsync(item, existing);
                 var activePath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "GestorArchivos", "Desktop", "Cache", item.Id.ToString("N"),
