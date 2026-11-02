@@ -196,6 +196,23 @@ public partial class MainWindow : Window
                 return;
             }
 
+            var editChoice = SharedEditDialog.Show(this, item.Name);
+            if (editChoice == SharedEditChoice.Cancel) return;
+            if (editChoice == SharedEditChoice.Copy)
+            {
+                using var sourceInfo = await SendAsync(HttpMethod.Get, $"files/{item.Id}");
+                using var sourceDoc = await JsonDocument.ParseAsync(
+                    await sourceInfo.Content.ReadAsStreamAsync());
+                var sourceFolderId = sourceDoc.RootElement.GetProperty("carpetaId").GetGuid();
+                var copy = await SharedFileCopyService.CreateAsync(
+                    _http, item.Id, sourceFolderId, item.Name);
+                await LoadFolderAsync(_folderId);
+                var copiedItem = _items.FirstOrDefault(x => x.Id == copy.Id);
+                if (copiedItem is null)
+                    throw new IOException("La copia se creó, pero no aparece en la carpeta.");
+                await OpenCopiedFileAsync(copiedItem);
+                return;
+            }
             StatusText.Text = "Preparando " + item.Name + "...";
             var directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -257,7 +274,7 @@ public partial class MainWindow : Window
             if (localHash is not null &&
                 !string.Equals(localHash, serverHash, StringComparison.OrdinalIgnoreCase))
             {
-                var choice = SharedEditDialog.Show(this, item.Name);
+                var choice = editChoice;
 
                 if (choice == SharedEditChoice.Cancel)
                 {
