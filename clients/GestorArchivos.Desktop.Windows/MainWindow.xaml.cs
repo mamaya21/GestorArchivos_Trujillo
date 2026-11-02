@@ -491,6 +491,25 @@ public partial class MainWindow : Window
         public string Kind => IsFolder ? "Carpeta" : "Archivo";
         public string SizeText => IsFolder ? "" : Size.ToString("N0") + " bytes";
         public string VersionText => IsFolder ? "" : Version.ToString();
+        public string IconColor => IsFolder ? "#D78A19" : Path.GetExtension(Name).ToLowerInvariant() switch
+        {
+            ".pdf" => "#D94848",
+            ".doc" or ".docx" or ".rtf" => "#2867CF",
+            ".xls" or ".xlsx" or ".csv" => "#15865D",
+            ".ppt" or ".pptx" => "#D46A28",
+            ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" => "#8B52C8",
+            ".zip" or ".rar" or ".7z" => "#A46C24",
+            _ => "#5C718E"
+        };
+        public string IconBackground => IsFolder ? "#FFF2D8" : Path.GetExtension(Name).ToLowerInvariant() switch
+        {
+            ".pdf" => "#FDEAEA",
+            ".doc" or ".docx" or ".rtf" => "#EAF1FF",
+            ".xls" or ".xlsx" or ".csv" => "#E5F6EE",
+            ".ppt" or ".pptx" => "#FFF0E4",
+            ".jpg" or ".jpeg" or ".png" or ".gif" or ".webp" => "#F3EAFE",
+            _ => "#EDF2F8"
+        };
         public string Icon
         {
             get
