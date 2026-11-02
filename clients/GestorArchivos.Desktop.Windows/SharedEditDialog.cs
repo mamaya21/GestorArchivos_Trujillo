@@ -13,7 +13,7 @@ internal static class SharedEditDialog
         var result = SharedEditChoice.Cancel;
         var dialog = new Window
         {
-            Owner = owner, Title = "Editar archivo compartido",
+            Owner = owner, Title = "Abrir archivo compartido",
             Width = 555, Height = 260, MinWidth = 520,
             ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Background = Brushes.White, ShowInTaskbar = false
@@ -21,12 +21,12 @@ internal static class SharedEditDialog
         var root = new StackPanel { Margin = new Thickness(24) };
         root.Children.Add(new TextBlock
         {
-            Text = "Vas a editar un archivo del servidor compartido.",
+            Text = "Estás abriendo un archivo compartido",
             FontSize = 17, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 12)
         });
         root.Children.Add(new TextBlock
         {
-            Text = "Archivo: " + fileName + "\nLos cambios guardados se enviarán al servidor y se sincronizarán con los equipos vinculados.\nTambién puedes crear una copia independiente en la misma carpeta.",
+            Text = "Archivo: " + fileName + "\nPuedes abrirlo y editarlo normalmente. Los cambios que guardes se sincronizarán con el servidor y los equipos vinculados.\nSi prefieres trabajar de manera independiente, puedes crear una copia.",
             TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 23)
         });
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -36,7 +36,7 @@ internal static class SharedEditDialog
             button.Click += (_, _) => { result = choice; dialog.DialogResult = true; };
             buttons.Children.Add(button);
         }
-        Add("Continuar", SharedEditChoice.Continue, true);
+        Add("Abrir archivo", SharedEditChoice.Continue, true);
         Add("Crear una copia", SharedEditChoice.Copy);
         Add("Cancelar", SharedEditChoice.Cancel);
         root.Children.Add(buttons);
