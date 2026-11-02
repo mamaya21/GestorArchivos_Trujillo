@@ -344,6 +344,32 @@ public partial class MainWindow : Window
         catch (Exception ex) { ShowError(ex); }
     }
 
+    private async Task OpenCopiedFileAsync(ExplorerItem item)
+    {
+        var folder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "GestorArchivos", "Desktop", "Cache", item.Id.ToString("N"));
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, Path.GetFileName(item.Name));
+        using var response = await SendAsync(HttpMethod.Get, $"files/{item.Id}");
+        using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+        var hash = doc.RootElement.GetProperty("hashSha256").GetString() ?? "";
+        var version = doc.RootElement.GetProperty("version").GetInt32();
+        await DownloadServerCopyAsync(item.Id, path);
+        await using var file = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(file));
+        if (!string.Equals(hash, actualHash, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("La copia descargada no coincide con el servidor.");
+        DesktopCacheState.Write(path, actualHash, version);
+        var session = new DesktopEditSession(_http, item.Id, path, version, actualHash,
+            message => Dispatcher.InvokeAsync(() => StatusText.Text = message));
+        _editSessions[item.Id] = session;
+        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+        catch { _editSessions.Remove(item.Id); session.Dispose(); throw; }
+        StatusText.Text = "Copia compartida abierta. Los cambios se sincronizarán.";
+    }
+
     private async Task DownloadServerCopyAsync(Guid fileId, string destination)
     {
         using var response = await SendAsync(HttpMethod.Get, $"files/{fileId}/download");
