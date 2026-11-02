@@ -43,6 +43,20 @@ public sealed class DesktopEditSession : IDisposable
         _watcher.Created += Changed;
         _watcher.Renamed += Renamed;
         _watcher.EnableRaisingEvents = true;
+        _ = PollForChangesAsync();
+    }
+
+    // Office may save via atomic rename rather than a Changed event. Polling
+    // also retries uploads after temporary network or file-lock failures.
+    private async Task PollForChangesAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            while (await timer.WaitForNextTickAsync(_stop.Token))
+                Queue();
+        }
+        catch (OperationCanceledException) { }
     }
 
     private void Changed(object sender, FileSystemEventArgs e) => Queue();
@@ -79,7 +93,7 @@ public sealed class DesktopEditSession : IDisposable
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _status("No se pudo guardar el cambio en el servidor. La copia local se conserva.");
+                    _status("No se pudo guardar el cambio en el servidor. Se reintentará automáticamente.");
                     return;
                 }
             }
