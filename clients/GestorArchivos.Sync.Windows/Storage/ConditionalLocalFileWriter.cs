@@ -14,7 +14,7 @@ public static class ConditionalLocalFileWriter
         ArgumentNullException.ThrowIfNull(content);
 
         var directory = Path.GetDirectoryName(destinationPath)
-            ?? throw new InvalidOperationException("Directorio inv�lido.");
+            ?? throw new InvalidOperationException("Directorio inválido.");
 
         Directory.CreateDirectory(directory);
 
@@ -89,6 +89,13 @@ public static class ConditionalLocalFileWriter
             {
                 return false;
             }
+            catch (IOException ex) when ((ex.HResult & 0xFFFF) is 32 or 33)
+            {
+                // Office mantiene bloqueos exclusivos mientras guarda.
+                // No reemplazar ni considerar el archivo como modificado.
+                // La siguiente pasada de sincronización volverá a intentarlo.
+                return false;
+            }
 
             await using (original)
             {
@@ -133,11 +140,11 @@ public static class ConditionalLocalFileWriter
         catch (IOException)
         {
             // La limpieza pendiente no debe ocultar
-            // el resultado de la operaci�n principal.
+            // el resultado de la operación principal.
         }
         catch (UnauthorizedAccessException)
         {
-            // No forzar la eliminaci�n si Windows
+            // No forzar la eliminación si Windows
             // mantiene bloqueado el archivo.
         }
     }
