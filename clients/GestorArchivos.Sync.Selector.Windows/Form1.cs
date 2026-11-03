@@ -578,11 +578,12 @@ public partial class Form1 : Form
                     WriteIndented = true
                 });
 
-            // Guardar primero la configuración compartida.
-            // Si falla, no informar que el servicio
-            // ya recibió la nueva selección.
-            // La solicitud se conserva hasta que el servicio confirme su ejecución.
-            // No borrar solicitudes anteriores pendientes.
+            // Publicar primero la nueva selección: el servicio nunca debe
+            // ver una retirada mientras la selección antigua sigue activa.
+            WriteAtomically(SharedConfigPath, json);
+
+            // Persistir después las retiradas; el servicio las procesará
+            // en el siguiente ciclo sin descartarlas por una carrera.
             if (_removals.Count > 0)
             {
                 var pending = File.Exists(RemovalPath)
@@ -593,7 +594,6 @@ public partial class Form1 : Form
                         pending.Add(removal);
                 WriteAtomically(RemovalPath, JsonSerializer.Serialize(pending));
             }
-            WriteAtomically(SharedConfigPath, json);
 
             // Conservar también la configuración
             // del usuario interactivo.
