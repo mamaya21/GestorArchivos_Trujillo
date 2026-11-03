@@ -2088,10 +2088,65 @@ public sealed class SelectiveSyncService
             if (currentFolderFileIds.Contains(remoteId))
                 continue;
 
-            // El archivo existe en otra carpeta remota.
-            // No interpretar un traslado como eliminación.
+            // El archivo sigue activo, pero fue movido o renombrado en web.
+            // Propagar su identidad a una carpeta local ya asociada, sin
+            // sobrescribir archivos ni confundir el movimiento con eliminación.
             if (allRemoteFileIds.Contains(remoteId))
+            {
+                var active = (await _api.GetSnapshotAsync(cancellationToken))
+                    .Files.SingleOrDefault(x => x.Id == remoteId);
+                if (active is null || currentFolderFileIds.Contains(active.Id))
+                    continue;
+
+                var destinationFolder = items.SingleOrDefault(x =>
+                    x.Tipo == SyncItemType.Folder &&
+                    x.CarpetaRemotaId == active.CarpetaId);
+                if (destinationFolder is null ||
+                    !Directory.Exists(destinationFolder.RutaLocal))
+                {
+                    Console.WriteLine($"[SyncMove] Destino remoto sin carpeta local asociada: {item.RutaLocal}");
+                    continue;
+                }
+
+                ValidateRemoteName(active.Nombre);
+                var source = Path.GetFullPath(item.RutaLocal);
+                var target = Path.GetFullPath(Path.Combine(destinationFolder.RutaLocal, active.Nombre));
+                if (PathsEqual(source, target))
+                    continue;
+                if (File.Exists(target) || Directory.Exists(target) ||
+                    Directory.Exists(source))
+                {
+                    Console.WriteLine($"[SyncMove] Destino local ocupado o incompatible: {target}");
+                    continue;
+                }
+
+                if (File.Exists(source))
+                {
+                    ValidatePathWithoutLinks(source);
+                    ValidatePathWithoutLinks(destinationFolder.RutaLocal);
+                    var sourceHash = await HashLocalAsync(source, cancellationToken);
+                    if (!HashesEqual(sourceHash, active.HashSha256))
+                    {
+                        Console.WriteLine($"[SyncMove] Contenido local diferente; movimiento aplazado: {source}");
+                        continue;
+                    }
+                    File.Move(source, target);
+                    localFiles.Remove(Path.GetFileName(source));
+                }
+
+                await _api.UpdateItemPathAsync(item.SyncItemId, target, cancellationToken);
+                var updatedBaselines = (await _baselines.LoadAsync(cancellationToken)).ToList();
+                var entry = updatedBaselines.FirstOrDefault(x => x.SyncItemId == item.SyncItemId);
+                if (entry is not null)
+                {
+                    entry.LocalPath = target;
+                    entry.RemoteVersion = active.Version;
+                    entry.RemoteHash = active.HashSha256;
+                    await _baselines.SaveAsync(updatedBaselines, cancellationToken);
+                }
+                Console.WriteLine($"[SyncMove] Movimiento remoto aplicado: {source} => {target}");
                 continue;
+            }
 
             var localPath = Path.GetFullPath(item.RutaLocal);
 
