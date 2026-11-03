@@ -69,7 +69,7 @@ internal static class Program
             menu.Items.Add("Salir del agente", null, (_, _) => ExitThread());
             _tray = new NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application,
                 Text = "Gestor Archivos - Selector",
                 ContextMenuStrip = menu,
                 Visible = true
