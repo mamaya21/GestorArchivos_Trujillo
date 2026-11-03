@@ -1667,7 +1667,31 @@ export default function FilesPage() {
           }
           return
         }
+        const hostResponse = await fetch('http://127.0.0.1:47831/control')
+        if (!hostResponse.ok) throw new Error('No se pudo identificar el equipo local')
+        const hostState = await hostResponse.json() as { hostName?: string; deviceId?: string }
+        const hostName = hostState.hostName?.trim()
+        if (!hostName) throw new Error('El cliente Windows no informa el nombre del equipo')
+        const recoverable = devices.find(device =>
+          device.active && !device.rootFolderDeleted && device.deviceName === hostName &&
+          !hostState.deviceId,
+        )
         const previous = devices.filter(device => !device.active && !device.rootFolderDeleted)
+        if (recoverable) {
+          const recovery = await Swal.fire({
+            icon: 'question',
+            title: 'Recuperar vinculación de este equipo',
+            text: `El equipo ${hostName} figura activo en tu cuenta, pero su registro local se perdió. ¿Deseas recuperar la misma carpeta y renovar su credencial? Esto invalidará cualquier credencial anterior.`,
+            showCancelButton: true,
+            confirmButtonText: 'Recuperar vinculación',
+            cancelButtonText: 'Cancelar',
+          })
+          if (!recovery.isConfirmed) return
+          await activateSyncOnThisComputer(recoverable.deviceId, true)
+          setSyncLinkedHere(true)
+          await Swal.fire({ icon: 'success', title: 'Vinculación recuperada', text: 'Se recuperó el dispositivo sin crear otra carpeta raíz.' })
+          return
+        }
         let reuseDeviceId: string | undefined
         if (previous.length > 0) {
           const choices = previous.map(device => `
