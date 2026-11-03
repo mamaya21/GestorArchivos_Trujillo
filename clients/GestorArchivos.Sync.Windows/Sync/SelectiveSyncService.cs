@@ -2848,8 +2848,33 @@ public sealed class SelectiveSyncService
             var matches = items.Where(x => PathsEqual(x.RutaLocal, path) &&
                 (request.Kind == 0 ? x.Tipo == SyncItemType.File : x.Tipo == SyncItemType.Folder)).ToList();
             if (matches.Count != 1)
+            {
+                // Una retirada pendiente puede sobrevivir a la pérdida de su
+                // asociación. Recuperar únicamente una carpeta raíz inequívoca
+                // del dispositivo, sin tocar selecciones ni asociaciones ajenas.
+                if (matches.Count == 0 && request.SendToTrash == true &&
+                    request.Kind == 1)
+                {
+                    var snapshot = await _api.GetSnapshotAsync(cancellationToken);
+                    var candidates = snapshot.Folders.Where(x =>
+                        x.CarpetaPadreId == snapshot.RootFolderId &&
+                        NamesEqual(x.Nombre, Path.GetFileName(path))).ToList();
+                    if (candidates.Count == 1 &&
+                        !items.Any(x => x.CarpetaRemotaId == candidates[0].Id) &&
+                        !selections.Any(x => x.Kind == 1 &&
+                            NamesEqual(Path.GetFileName(x.Path), candidates[0].Nombre)))
+                    {
+                        await _api.TrashSelectedFolderAsync(candidates[0].Id, cancellationToken);
+                        requests.Remove(request);
+                        await File.WriteAllTextAsync(RemovalPath,
+                            JsonSerializer.Serialize(requests), cancellationToken);
+                        Console.WriteLine($"[SyncRemoval] Carpeta raíz enviada a papelera por solicitud pendiente: {path}");
+                        continue;
+                    }
+                }
                 throw new InvalidOperationException(
-                    $"No existe una asociación única para retirar: {path}");
+                    $"No existe una asociación única y verificable para retirar: {path}");
+            }
 
             var item = matches[0];
             try
