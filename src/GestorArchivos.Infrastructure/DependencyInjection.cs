@@ -54,6 +54,7 @@ public static class DependencyInjection
         services.AddAuthentication(IdentityConstants.ApplicationScheme)
             .AddCookie(IdentityConstants.ApplicationScheme, options =>
             {
+				options.Cookie.Path = "/";
                 options.Cookie.Name = "GestorArchivos.Auth";
                 options.Cookie.HttpOnly = true;
                 options.Cookie.SecurePolicy = allowInsecureDevelopmentCookies
