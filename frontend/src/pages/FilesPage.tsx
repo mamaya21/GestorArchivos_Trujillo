@@ -1573,16 +1573,17 @@ export default function FilesPage() {
         }
       }
       const linkedElsewhere = Boolean(hostRegistration?.active && !hostRegistration.linkedToCurrentAccount)
+      const canOpenExistingSelector = linkedElsewhere && Boolean(localState?.deviceId)
       setSyncLinkedHere(Boolean(linkedHere))
       const result = await Swal.fire({
         title: 'Sincronización',
-        html: `${active.length ? rows : '<p>No hay equipos activos en esta cuenta.</p>'}\n          ${linkedElsewhere ? '<p style="color:#b91c1c;font-size:13px">Este equipo ya está vinculado a otra cuenta. Debes desvincularlo desde esa cuenta antes de activarlo aquí.</p>' : ''}
-          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Aplicación de sincronización no disponible' : !localState.deviceId || !linkedHere ? 'Desvinculado' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
+        html: `${active.length ? rows : '<p>No hay equipos activos en esta cuenta.</p>'}\n          ${linkedElsewhere ? '<p style="font-size:13px">Este equipo ya tiene una vinculación. Puedes consultar su estado y, si el agente conserva su registro, abrir el selector sin volver a registrarlo.</p>' : ''}
+          <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Aplicación de sincronización no disponible' : !localState.deviceId ? (linkedElsewhere ? 'Registro local no disponible' : 'Desvinculado') : localState.paused ? 'Pausado' : 'En ejecución'}</p>
           <p style="font-size:13px">Las selecciones se administran desde el selector de sincronización. Desvincular conserva los archivos locales y remotos.</p>`,
         showCancelButton: true,
         showDenyButton: linkedHere !== undefined,
-        showConfirmButton: true,
-        confirmButtonText: !linkedHere ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
+        showConfirmButton: !linkedElsewhere || canOpenExistingSelector,
+        confirmButtonText: canOpenExistingSelector ? 'Abrir selector' : !linkedHere ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
         denyButtonText: 'Desvincular este equipo',
         cancelButtonText: 'Cerrar',
         width: 540,
@@ -1662,6 +1663,14 @@ export default function FilesPage() {
         return
       }
       if (!result.isConfirmed) return
+
+      if (canOpenExistingSelector) {
+        const selectorResponse = await fetch('http://127.0.0.1:47832/selector', { method: 'POST' })
+        if (!selectorResponse.ok) throw new Error('No se pudo abrir el selector del equipo.')
+        return
+      }
+
+      if (linkedElsewhere) return
 
       if (!linkedHere) {
         if (localState === null) {
