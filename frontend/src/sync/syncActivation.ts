@@ -11,7 +11,46 @@ type RegisterSyncDeviceResponse = {
   token: string
 }
 
+export function isWindowsDesktop(): boolean {
+  const ua = navigator.userAgent
+  return /Windows NT/i.test(ua) && !/Android|iPhone|iPad|Mobile/i.test(ua)
+}
+
+export async function ensureLocalSyncReady(): Promise<void> {
+  if (!isWindowsDesktop()) {
+    throw new Error('La sincronización local solo está disponible en computadoras Windows.')
+  }
+
+  let response: Response
+  try {
+    response = await fetch('http://127.0.0.1:47831/control', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4000),
+    })
+  } catch {
+    throw new Error('No se detectó el cliente de sincronización. Instala e inicia Gestor de Archivos para Windows antes de vincular este equipo.')
+  }
+
+  if (!response.ok) {
+    throw new Error('El cliente local de sincronización no está disponible. Comprueba que esté iniciado.')
+  }
+
+  let state: unknown
+  try {
+    state = await response.json()
+  } catch {
+    throw new Error('El cliente local devolvió una respuesta inválida.')
+  }
+  if (!state || typeof state !== 'object' || !('paused' in state) ||
+      typeof (state as { paused: unknown }).paused !== 'boolean') {
+    throw new Error('No se pudo verificar el estado del cliente de sincronización.')
+  }
+}
+
 export async function activateSyncOnThisComputer(reuseDeviceId?: string, reuseDeviceName?: string): Promise<void> {
+  await ensureLocalSyncReady()
+
   const registration =
     await apiRequest<RegisterSyncDeviceResponse>(
       '/sync/devices/register',
