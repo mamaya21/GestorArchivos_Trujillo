@@ -702,7 +702,10 @@ public sealed class SelectiveSyncService
                     throw new InvalidOperationException(
                         $"El archivo local cambió antes del renombrado: '{oldPath}'.");
 
-                File.Move(oldPath, destination);
+                // Si el destino ya existía y la copia antigua fue resguardada,
+                // no intentar mover por segunda vez una ruta que ya no existe.
+                if (File.Exists(oldPath))
+                    File.Move(oldPath, destination);
             }
             else if (!File.Exists(destination))
             {
