@@ -77,6 +77,14 @@ public sealed class SyncApiClient : ISyncApiClient
             cancellationToken: cancellationToken) ?? [];
     }
 
+    public async Task<IReadOnlyList<SyncItem>> GetInactiveItemsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _httpClient.GetAsync("api/sync/items/inactive", cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<List<SyncItem>>(
+            cancellationToken: cancellationToken) ?? [];
+    }
+
     public async Task<SyncSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken = default)
     {
