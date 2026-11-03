@@ -80,6 +80,14 @@ public sealed class SyncApiClient : ISyncApiClient
     public async Task<IReadOnlyList<SyncItem>> GetInactiveItemsAsync(CancellationToken cancellationToken = default)
     {
         using var response = await _httpClient.GetAsync("api/sync/items/inactive", cancellationToken);
+        // El servidor puede estar ejecutando una versión anterior que no expone
+        // este endpoint. No detener toda la sincronización por una consulta
+        // auxiliar: sin datos verificados, no recuperar ni mover archivos.
+        if (response.StatusCode is HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotFound)
+        {
+            Console.WriteLine("[Sync] API sin soporte de asociaciones inactivas; se omite la reconciliación opcional.");
+            return [];
+        }
         await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<List<SyncItem>>(
             cancellationToken: cancellationToken) ?? [];
