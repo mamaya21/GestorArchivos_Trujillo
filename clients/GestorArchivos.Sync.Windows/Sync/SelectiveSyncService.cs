@@ -2116,9 +2116,13 @@ public sealed class SelectiveSyncService
                         baseline.LocalHash,
                         baseline.RemoteHash))
                 {
-                    throw new InvalidOperationException(
-                        $"No se puede resolver la eliminación remota " +
-                        $"de '{localPath}': falta un baseline confiable.");
+                    // No hay evidencia suficiente para retirar el archivo ni
+                    // desvincularlo. Mantener ambos intactos y permitir que
+                    // continúe la sincronización de los demás elementos.
+                    Console.WriteLine(
+                        $"[SyncFolder] Eliminación remota pendiente de revisión: " +
+                        $"'{localPath}' sin baseline confiable. Archivo conservado.");
+                    continue;
                 }
 
                 ValidatePathWithoutLinks(localPath);
