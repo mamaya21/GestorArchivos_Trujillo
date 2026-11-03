@@ -2170,8 +2170,9 @@ public sealed class SelectiveSyncService
                  parentMapping.CarpetaRemotaId == remote.CarpetaId))
                 continue;
 
-            if (remote is null &&
-                !await _api.IsItemTrashedAsync(item.SyncItemId, cancellationToken))
+            // Inactive trash-status is not supported by older API versions.
+            // Without a visible remote identity, retain the local file.
+            if (remote is null)
                 continue;
 
             ValidatePathWithoutLinks(path);
