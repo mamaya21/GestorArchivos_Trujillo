@@ -1,5 +1,5 @@
 #define AppName "Gestor de Archivos"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #define AppPublisher "Estudio Jurídico Trujillo"
 #define ServerUrl "https://archivos.juridicotrujillo.com"
 #define ServiceName "GestorArchivosSync"
@@ -12,7 +12,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\Gestor de Archivos
 DefaultGroupName=Gestor de Archivos
 OutputDir=..\publish\Installer\Output
-OutputBaseFilename=GestorArchivos-Instalador-x64
+OutputBaseFilename=GestorArchivos-Instalador-1.0.1-x64
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -100,13 +100,13 @@ begin
   begin
     RunSC('stop "' + ServiceKey + '"');
     if not RunSC('config "' + ServiceKey + '" binPath= ' +
-      '""' + ServiceExe + '"" start= auto') then
+      '"' + ServiceExe + '" start= auto') then
       RaiseException('No se pudo actualizar el servicio. Revisa el registro de instalación.');
   end
   else
   begin
     if not RunSC('create "' + ServiceKey + '" binPath= ' +
-      '""' + ServiceExe + '"" start= auto DisplayName= "Gestor Archivos Sync"') then
+      '"' + ServiceExe + '" start= auto DisplayName= "Gestor Archivos Sync"') then
       RaiseException('No se pudo crear el servicio. Revisa el registro de instalación.');
   end;
 
