@@ -135,8 +135,12 @@ public sealed class SyncAtomicFileController : ControllerBase
             .ThenByDescending(x => x.FechaCreacion)
             .FirstOrDefaultAsync(cancellationToken);
 
+        // An inactive association belongs to a previous selection of this
+        // local path. Reuse the mapping row for the new file without deleting
+        // or modifying the previously referenced remote file.
+        var reuseInactiveMapping = existingItem is { Activo: false };
         var reuseTrashedMapping = false;
-        if (existingItem is not null)
+        if (existingItem is not null && !reuseInactiveMapping)
         {
             if (existingItem.Tipo == TipoElementoSync.Archivo &&
                 existingItem.ArchivoRemotoId.HasValue)
@@ -146,8 +150,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                          x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
             }
 
-            if (!reuseTrashedMapping && (!existingItem.Activo ||
-                existingItem.Tipo != TipoElementoSync.Archivo ||
+            if (!reuseTrashedMapping && (existingItem.Tipo != TipoElementoSync.Archivo ||
                 !existingItem.ArchivoRemotoId.HasValue))
             {
                 return Conflict(new
@@ -277,7 +280,7 @@ public sealed class SyncAtomicFileController : ControllerBase
                 CreadoPorUsuarioId = userId
             };
 
-            var syncItem = reuseTrashedMapping
+            var syncItem = reuseTrashedMapping || reuseInactiveMapping
                 ? await _db.ElementosSync.SingleAsync(
                     x => x.Id == existingItem!.Id, cancellationToken)
                 : new ElementoSync
@@ -287,14 +290,15 @@ public sealed class SyncAtomicFileController : ControllerBase
                     Tipo = TipoElementoSync.Archivo,
                     ArchivoRemotoId = fileId
                 };
-            if (reuseTrashedMapping)
+            if (reuseTrashedMapping || reuseInactiveMapping)
             {
+                syncItem.Tipo = TipoElementoSync.Archivo;
                 syncItem.ArchivoRemotoId = fileId;
                 syncItem.Activo = true;
             }
 
             _db.Archivos.Add(remoteFile);
-            if (!reuseTrashedMapping)
+            if (!reuseTrashedMapping && !reuseInactiveMapping)
                 _db.ElementosSync.Add(syncItem);
 
             await _changes.RegisterAsync(
