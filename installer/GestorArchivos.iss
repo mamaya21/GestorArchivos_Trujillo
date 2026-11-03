@@ -52,9 +52,13 @@ const
 function RunSC(Params: String): Boolean;
 var
   ExitCode: Integer;
+  Started: Boolean;
 begin
-  Result := Exec(ExpandConstant('{sys}\sc.exe'), Params, '', SW_HIDE,
-    ewWaitUntilTerminated, ExitCode) and (ExitCode = 0);
+  Started := Exec(ExpandConstant('{sys}\sc.exe'), Params, '', SW_HIDE,
+    ewWaitUntilTerminated, ExitCode);
+  Result := Started and (ExitCode = 0);
+  Log(Format('sc.exe %s | iniciado=%s | código=%d', [
+    Params, BoolToStr(Started), ExitCode]));
 end;
 
 procedure ReplaceInFile(FileName, OldText, NewText: String);
