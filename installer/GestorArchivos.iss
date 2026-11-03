@@ -1,5 +1,5 @@
 #define AppName "Gestor de Archivos"
-#define AppVersion "1.0.1"
+#define AppVersion "1.0.2"
 #define AppPublisher "Estudio Jurídico Trujillo"
 #define ServerUrl "https://archivos.juridicotrujillo.com"
 #define ServiceName "GestorArchivosSync"
@@ -12,7 +12,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\Gestor de Archivos
 DefaultGroupName=Gestor de Archivos
 OutputDir=..\publish\Installer\Output
-OutputBaseFilename=GestorArchivos-Instalador-1.0.1-x64
+OutputBaseFilename=GestorArchivos-Instalador-x64
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
