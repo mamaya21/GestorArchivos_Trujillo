@@ -92,18 +92,24 @@ begin
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
     'GESTOR_ARCHIVOS_WEB_ORIGIN', WebUrl);
 
-  { Configura el servicio sin eliminarlo en cada actualización. }
-  RunSC('stop "' + ServiceKey + '"');
-  if not RunSC('config "' + ServiceKey + '" binPath= "\"' +
-    ServiceExe + '\"" start= auto') then
+  { La clave del servicio determina si debemos crear o actualizar. }
+  if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\' + ServiceKey) then
+  begin
+    RunSC('stop "' + ServiceKey + '"');
+    if not RunSC('config "' + ServiceKey + '" binPath= "\"' +
+      ServiceExe + '\"" start= auto') then
+      RaiseException('No se pudo actualizar el servicio. Revisa el registro de instalación.');
+  end
+  else
   begin
     if not RunSC('create "' + ServiceKey + '" binPath= "\"' +
       ServiceExe + '\"" start= auto DisplayName= "Gestor Archivos Sync"') then
-      RaiseException('No se pudo registrar el servicio de sincronización. Comprueba los permisos de administrador.');
+      RaiseException('No se pudo crear el servicio. Revisa el registro de instalación.');
   end;
 
+  { Un servicio ya iniciado no necesita arrancarse nuevamente. }
   if not RunSC('start "' + ServiceKey + '"') then
-    RaiseException('El servicio se registró, pero no pudo iniciarse. Revisa el Visor de eventos de Windows.');
+    Log('No se pudo iniciar el servicio o ya estaba en ejecución. Verificar estado tras instalar.');
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
