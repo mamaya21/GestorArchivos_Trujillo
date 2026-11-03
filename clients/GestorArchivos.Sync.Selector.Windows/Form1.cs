@@ -41,8 +41,7 @@ public partial class Form1 : Form
         Icon = CreateAppIcon();
         BuildInterface();
         LoadSelections();
-        _lastSharedWriteUtc = File.Exists(SharedConfigPath)
-            ? File.GetLastWriteTimeUtc(SharedConfigPath) : DateTime.MinValue;
+        _lastSharedWriteUtc = DateTime.MinValue;
         _refreshTimer.Tick += (_, _) => RefreshExternalSelections();
         _refreshTimer.Start();
         FormClosed += (_, _) => _refreshTimer.Dispose();
@@ -575,80 +574,41 @@ public partial class Form1 : Form
     {
         try
         {
-            var json = JsonSerializer.Serialize(
-                _selections,
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                });
+            using var client = CreateServiceClient();
+            var payload = JsonSerializer.Serialize(new { selections = _selections, removals = _removals });
+            using var response = client.PostAsync("selections",
+                new StringContent(payload, System.Text.Encoding.UTF8, "application/json"))
+                .GetAwaiter().GetResult();
+            response.EnsureSuccessStatusCode();
 
-            // Las retiradas antiguas de rutas nuevamente seleccionadas no
-            // deben sobrevivir en el archivo compartido.
-            if (File.Exists(RemovalPath))
-            {
-                var pending = JsonSerializer.Deserialize<List<RemovalRequest>>(
-                    File.ReadAllText(RemovalPath)) ?? new();
-                var retained = pending.Where(x => !_selections.Any(y =>
-                    IsSamePath(x.Path, y.Path))).ToList();
-                if (retained.Count != pending.Count)
-                    WriteAtomically(RemovalPath, JsonSerializer.Serialize(retained));
-            }
-
-            // Publicar primero la nueva selección: el servicio nunca debe
-            // ver una retirada mientras la selección antigua sigue activa.
-            WriteAtomically(SharedConfigPath, json);
-
-            // Persistir después las retiradas; el servicio las procesará
-            // en el siguiente ciclo sin descartarlas por una carrera.
-            if (_removals.Count > 0)
-            {
-                var pending = File.Exists(RemovalPath)
-                    ? JsonSerializer.Deserialize<List<RemovalRequest>>(File.ReadAllText(RemovalPath)) ?? new()
-                    : new List<RemovalRequest>();
-                foreach (var removal in _removals)
-                    if (!pending.Any(x => string.Equals(x.Path, removal.Path, StringComparison.OrdinalIgnoreCase)))
-                        pending.Add(removal);
-                WriteAtomically(RemovalPath, JsonSerializer.Serialize(pending));
-            }
-
-            // Conservar también la configuración
-            // del usuario interactivo.
-            WriteAtomically(ConfigPath, json);
-
-            // Solo la confirmación de una selección nueva habilita el motor.
-            var pendingPath = Path.Combine(
-                Path.GetDirectoryName(SharedConfigPath)!,
-                "selection-pending.flag");
-            if (File.Exists(pendingPath))
-                File.Delete(pendingPath);
-
+            // La configuración compartida pertenece exclusivamente al servicio.
+            // Nunca escribir directamente en ProgramData desde el usuario interactivo.
             _removals.Clear();
             _dirty = false;
-            _lastSharedWriteUtc = File.GetLastWriteTimeUtc(SharedConfigPath);
-            MessageBox.Show(
-                "Selecciones guardadas correctamente.",
-                "Gestor de Archivos",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            MessageBox.Show(
-                "No se pudo guardar la configuración compartida. " +
-                "Verifica los permisos de escritura en " +
-                @"C:\ProgramData\GestorArchivos\Sync.",
-                "Permisos insuficientes",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            _lastSharedWriteUtc = File.Exists(SharedConfigPath)
+                ? File.GetLastWriteTimeUtc(SharedConfigPath) : DateTime.UtcNow;
+            MessageBox.Show("Selecciones guardadas correctamente.",
+                "Gestor de Archivos", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(
-                ex.Message,
-                "Error al guardar",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+            MessageBox.Show("No se pudieron guardar las selecciones mediante el servicio Windows. " +
+                "Comprueba que GestorArchivosSync esté iniciado. " + ex.Message,
+                "Error al guardar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private static HttpClient CreateServiceClient()
+    {
+        var origin = (Environment.GetEnvironmentVariable("GESTOR_ARCHIVOS_WEB_ORIGIN")
+            ?? Microsoft.Win32.Registry.GetValue(
+                @"HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+                "GESTOR_ARCHIVOS_WEB_ORIGIN", null) as string
+            ?? "http://localhost:5173").TrimEnd('/');
+        var client = new HttpClient { BaseAddress = new Uri("http://127.0.0.1:47831/"),
+            Timeout = TimeSpan.FromSeconds(10) };
+        client.DefaultRequestHeaders.TryAddWithoutValidation("Origin", origin);
+        return client;
     }
 
     private static void WriteAtomically(
@@ -689,88 +649,30 @@ public partial class Form1 : Form
                     "Actualizar selecciones", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (!File.Exists(SharedConfigPath))
-        {
-            if (force) RefreshList();
-            return;
-        }
-        var modified = File.GetLastWriteTimeUtc(SharedConfigPath);
-        if (!force && modified <= _lastSharedWriteUtc) return;
         try
         {
-            var saved = JsonSerializer.Deserialize<List<SyncSelection>>(
-                File.ReadAllText(SharedConfigPath));
+            using var client = CreateServiceClient();
+            var json = client.GetStringAsync("selections").GetAwaiter().GetResult();
+            var saved = JsonSerializer.Deserialize<List<SyncSelection>>(json);
             if (saved is null) return;
             _selections.Clear();
             foreach (var selection in saved)
                 if (selection is not null &&
-                    (selection.Kind == SelectionKind.File ||
-                     selection.Kind == SelectionKind.Folder))
-                    AddSelection(selection.Path, selection.Kind,
-                        refresh: false, validateExistence: false);
-            _lastSharedWriteUtc = modified;
+                    (selection.Kind == SelectionKind.File || selection.Kind == SelectionKind.Folder))
+                    AddSelection(selection.Path, selection.Kind, refresh: false, validateExistence: false);
             RefreshList();
         }
-        catch (IOException) { /* Atomic writer may be replacing the file. */ }
-        catch (UnauthorizedAccessException) { /* Retry on next tick. */ }
-        catch (JsonException) { /* Retry on next tick. */ }
+        catch (Exception ex)
+        {
+            if (force)
+                MessageBox.Show("No se pudo consultar el servicio: " + ex.Message,
+                    "Gestor de Archivos", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void LoadSelections()
     {
-        // La configuración compartida tiene prioridad
-        // cuando ya existe.
-        var path = File.Exists(SharedConfigPath)
-            ? SharedConfigPath
-            : ConfigPath;
-
-        if (!File.Exists(path))
-        {
-            RefreshList();
-            return;
-        }
-
-        try
-        {
-            var json = File.ReadAllText(path);
-
-            var saved = JsonSerializer.Deserialize<
-                List<SyncSelection>>(json);
-
-            if (saved is not null)
-            {
-                foreach (var selection in saved)
-                {
-                    if (selection is null ||
-                        string.IsNullOrWhiteSpace(selection.Path))
-                    {
-                        continue;
-                    }
-
-                    if (selection.Kind != SelectionKind.File &&
-                        selection.Kind != SelectionKind.Folder)
-                    {
-                        continue;
-                    }
-
-                    AddSelection(
-                        selection.Path,
-                        selection.Kind,
-                        refresh: false,
-                        validateExistence: false);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(
-                $"No se pudo cargar la configuración: {ex.Message}",
-                "Gestor de Archivos",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning);
-        }
-
-        RefreshList();
+        RefreshExternalSelections(force: false);
     }
 
     private static bool IsSamePath(
