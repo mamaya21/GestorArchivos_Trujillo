@@ -143,22 +143,20 @@ public partial class MainWindow
 
     private string? ChooseConflict(string name, bool folder, out bool applyToAll)
     {
-        applyToAll = false;
-        var choices = folder
-            ? "Escribe B (Conservar ambos), O (Omitir) o C (Cancelar)."
-            : "Escribe B (Conservar ambos), R (Reemplazar), O (Omitir) o C (Cancelar).";
-        var answer = Microsoft.VisualBasic.Interaction.InputBox(
-            $"Ya existe \"{name}\" en el destino.\n{choices}\nAgrega * para aplicar a todos (ejemplo B*).",
-            "Resolver conflicto", "B").Trim().ToUpperInvariant();
-        applyToAll = answer.EndsWith('*');
-        var choice = answer.TrimEnd('*');
-        return choice switch
-        {
-            "B" => "keepBoth",
-            "R" when !folder => "replace",
-            "O" => "skip",
-            _ => null
-        };
+        var dialog = new ConflictChoiceDialog(this, name, folder);
+        dialog.ShowDialog();
+        applyToAll = dialog.ApplyToAll;
+        return dialog.Resolution;
+    }
+
+    private void ItemsContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        var selected = ItemsList.SelectedItems.Count > 0;
+        CopyMenuItem.IsEnabled = selected;
+        CutMenuItem.IsEnabled = selected && _folderId.HasValue;
+        PasteMenuItem.IsEnabled = _clipboard is not null && _folderId.HasValue;
+        RenameMenuItem.IsEnabled = ItemsList.SelectedItems.Count == 1;
+        DeleteMenuItem.IsEnabled = selected;
     }
 
     private async Task<Guid> GetRootAsync(Guid folder)
