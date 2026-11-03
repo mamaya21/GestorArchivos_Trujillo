@@ -562,6 +562,56 @@ public sealed class TrashController : ControllerBase
 
         return NoContent();
     }
+    private async Task<IActionResult?> ValidateSyncReferencesAsync(
+        IReadOnlyCollection<Guid> folderIds,
+        IReadOnlyCollection<Guid> fileIds,
+        CancellationToken cancellationToken)
+    {
+        if (await _dbContext.DispositivosSync.AsNoTracking().AnyAsync(
+                d => d.Activo && folderIds.Contains(d.CarpetaRaizId), cancellationToken))
+            return Conflict(new { message = "No se puede eliminar la raíz de un dispositivo activo. Desvincule primero el dispositivo." });
+
+        if (await _dbContext.ElementosSync.AsNoTracking().AnyAsync(
+                e => e.Activo &&
+                     ((e.CarpetaRemotaId.HasValue && folderIds.Contains(e.CarpetaRemotaId.Value)) ||
+                      (e.ArchivoRemotoId.HasValue && fileIds.Contains(e.ArchivoRemotoId.Value))),
+                cancellationToken))
+            return Conflict(new { message = "Hay asociaciones de sincronización activas. Desvincule o retire la selección antes de eliminar." });
+
+        return null;
+    }
+
+    private async Task RemoveHistoricalSyncReferencesAsync(
+        IReadOnlyCollection<Guid> folderIds,
+        IReadOnlyCollection<Guid> fileIds,
+        CancellationToken cancellationToken)
+    {
+        var retiredDevices = await _dbContext.DispositivosSync
+            .Where(d => !d.Activo && folderIds.Contains(d.CarpetaRaizId))
+            .ToListAsync(cancellationToken);
+
+        var retiredDeviceIds = retiredDevices.Select(d => d.Id).ToHashSet();
+
+        var references = await _dbContext.ElementosSync
+            .Where(e => retiredDeviceIds.Contains(e.DispositivoId) ||
+                        (e.CarpetaRemotaId.HasValue && folderIds.Contains(e.CarpetaRemotaId.Value)) ||
+                        (e.ArchivoRemotoId.HasValue && fileIds.Contains(e.ArchivoRemotoId.Value)))
+            .ToListAsync(cancellationToken);
+
+        // Los bloqueos asociados a dispositivos retirados también impiden
+        // eliminar físicamente esos dispositivos.
+        var retiredLocks = await _dbContext.BloqueosArchivos
+            .Where(b => retiredDeviceIds.Contains(b.DispositivoId))
+            .ToListAsync(cancellationToken);
+
+        _dbContext.BloqueosArchivos.RemoveRange(retiredLocks);
+        _dbContext.ElementosSync.RemoveRange(references);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        _dbContext.DispositivosSync.RemoveRange(retiredDevices);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     [HttpDelete("files/{id:guid}")]
     public async Task<IActionResult> DeleteFilePermanently(
     Guid id,
@@ -586,6 +636,9 @@ public sealed class TrashController : ControllerBase
         {
             return Forbid();
         }
+
+        var syncConflict = await ValidateSyncReferencesAsync(Array.Empty<Guid>(), new[] { id }, cancellationToken);
+        if (syncConflict is not null) return syncConflict;
 
         var physicalPath =
             GetPhysicalPath(file.NombreFisico);
@@ -636,15 +689,17 @@ public sealed class TrashController : ControllerBase
             });
         }
 
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
         {
+            await RemoveHistoricalSyncReferencesAsync(Array.Empty<Guid>(), new[] { id }, cancellationToken);
             _dbContext.Archivos.Remove(file);
-
-            await _dbContext.SaveChangesAsync(
-                cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
         catch
         {
+            await transaction.RollbackAsync(CancellationToken.None);
             if (quarantinePath is not null &&
                 System.IO.File.Exists(quarantinePath))
             {
@@ -742,6 +797,9 @@ public sealed class TrashController : ControllerBase
                 folderIds.Contains(x.Id))
             .ToListAsync(cancellationToken);
 
+        var syncConflict = await ValidateSyncReferencesAsync(folderIds, files.Select(f => f.Id).ToArray(), cancellationToken);
+        if (syncConflict is not null) return syncConflict;
+
         var operationId = Guid.NewGuid();
 
         var quarantineDirectory =
@@ -819,6 +877,7 @@ public sealed class TrashController : ControllerBase
 
         try
         {
+            await RemoveHistoricalSyncReferencesAsync(folderIds, files.Select(f => f.Id).ToArray(), cancellationToken);
             _dbContext.Archivos.RemoveRange(
                 files);
 
