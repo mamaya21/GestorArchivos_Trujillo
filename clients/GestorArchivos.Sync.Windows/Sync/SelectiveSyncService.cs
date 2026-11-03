@@ -1958,11 +1958,15 @@ public sealed class SelectiveSyncService
                     throw new InvalidOperationException(
                         $"La asociación de '{localFile.Value}' tiene un tipo incompatible.");
 
-                // Nunca reemplazar archivos remotos activos o movidos.
-                // El servidor solo desasocia si el archivo anterior está
-                // confirmado en la papelera.
-                await _api.DetachTrashedItemAsync(
-                    existingMapping.SyncItemId, cancellationToken);
+                // El archivo local conserva una asociación, pero su ID remoto
+                // ya no aparece en el snapshot. No tratarlo como un archivo
+                // nuevo: podría ser una eliminación o movimiento remoto.
+                // Conservar el archivo y la asociación sin bloquear otros
+                // archivos de la misma carpeta, incluso si está vacía en web.
+                Console.WriteLine(
+                    $"[SyncFolder] Archivo local conservado sin recrear en web " +
+                    $"por asociación remota pendiente: {localFile.Value}");
+                continue;
             }
 
             ValidatePathWithoutLinks(localFile.Value);
