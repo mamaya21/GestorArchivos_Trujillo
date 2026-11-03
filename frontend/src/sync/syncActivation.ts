@@ -16,6 +16,21 @@ export function isWindowsDesktop(): boolean {
   return /Windows NT/i.test(ua) && !/Android|iPhone|iPad|Mobile/i.test(ua)
 }
 
+export const CLIENT_INSTALLER_URL = import.meta.env.VITE_CLIENT_INSTALLER_URL as string | undefined
+
+export async function checkSelectorReady(): Promise<boolean> {
+  try {
+    const response = await fetch('http://127.0.0.1:47832/selector', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4000),
+    })
+    return response.status === 204
+  } catch {
+    return false
+  }
+}
+
 export async function ensureLocalSyncReady(): Promise<void> {
   if (!isWindowsDesktop()) {
     throw new Error('La sincronización local solo está disponible en computadoras Windows.')
@@ -44,7 +59,11 @@ export async function ensureLocalSyncReady(): Promise<void> {
   }
   if (!state || typeof state !== 'object' || !('paused' in state) ||
       typeof (state as { paused: unknown }).paused !== 'boolean') {
-    throw new Error('No se pudo verificar el estado del cliente de sincronización.')
+    throw new Error('No se pudo verificar el estado del servicio de sincronización.')
+  }
+
+  if (!await checkSelectorReady()) {
+    throw new Error('No se detectó el selector de carpetas. Inicia el selector de Gestor de Archivos antes de vincular el equipo.')
   }
 }
 
