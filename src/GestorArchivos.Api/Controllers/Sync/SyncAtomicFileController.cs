@@ -125,12 +125,15 @@ public sealed class SyncAtomicFileController : ControllerBase
                 IsolationLevel.Serializable,
                 cancellationToken);
 
+        // Prefer the active association. Inactive historical rows must not
+        // shadow a valid active mapping for the same local path.
         var existingItem = await _db.ElementosSync
             .AsNoTracking()
-            .FirstOrDefaultAsync(
-                x => x.DispositivoId == deviceId &&
-                     x.RutaLocal == localPath,
-                cancellationToken);
+            .Where(x => x.DispositivoId == deviceId &&
+                        x.RutaLocal == localPath)
+            .OrderByDescending(x => x.Activo)
+            .ThenByDescending(x => x.FechaCreacion)
+            .FirstOrDefaultAsync(cancellationToken);
 
         var reuseTrashedMapping = false;
         if (existingItem is not null)
