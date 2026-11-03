@@ -2830,17 +2830,15 @@ public sealed class SelectiveSyncService
                 throw new InvalidOperationException("Solicitud de retirada inválida.");
 
             var path = Path.GetFullPath(request.Path);
-            // Si se volvió a seleccionar antes de ejecutar la retirada,
-            // la nueva decisión cancela la solicitud antigua. No bloquear
-            // la sincronización ni enviar contenido activo a la papelera.
+            // La selección puede seguir visible durante una escritura
+            // concurrente del selector. No descartar jamás una solicitud de
+            // Papelera por esa carrera: aplazarla hasta el siguiente ciclo.
             if (selections.Any(x => PathsEqual(x.Path, path) ||
                 (request.Kind == 1 && Path.GetFullPath(x.Path).StartsWith(
                     Path.TrimEndingDirectorySeparator(path) + Path.DirectorySeparatorChar,
                     StringComparison.OrdinalIgnoreCase))))
             {
-                requests.Remove(request);
-                await File.WriteAllTextAsync(RemovalPath,
-                    JsonSerializer.Serialize(requests), cancellationToken);
+                Console.WriteLine($"[SyncRemoval] Retirada pendiente; selección todavía activa: {path}");
                 continue;
             }
 
