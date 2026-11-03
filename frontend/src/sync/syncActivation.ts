@@ -84,7 +84,16 @@ export async function activateSyncOnThisComputer(reuseDeviceId?: string): Promis
     typeof (localState as { deviceId: unknown }).deviceId === 'string'
     ? (localState as { deviceId: string }).deviceId : ''
   if (linkedDeviceId && linkedDeviceId !== reuseDeviceId) {
-    throw new Error('Este equipo ya tiene una vinculación local. Desvincúlalo antes de registrarlo con otra cuenta.')
+    const previous = await apiRequest<{ active: boolean }>(
+      `/sync/devices/${encodeURIComponent(linkedDeviceId)}/registration-state`,
+    )
+    if (previous.active) {
+      throw new Error('Este equipo sigue vinculado a otra cuenta. Desvincúlalo desde esa cuenta antes de registrarlo.')
+    }
+    const deactivate = await fetch('http://127.0.0.1:47831/deactivate', { method: 'POST' })
+    if (!deactivate.ok) {
+      throw new Error('No se pudo limpiar la vinculación anterior del equipo.')
+    }
   }
 
   const registration =
