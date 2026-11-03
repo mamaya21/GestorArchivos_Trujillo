@@ -571,13 +571,6 @@ public sealed class TrashController : ControllerBase
                 d => d.Activo && folderIds.Contains(d.CarpetaRaizId), cancellationToken))
             return Conflict(new { message = "No se puede eliminar la raíz de un dispositivo activo. Desvincule primero el dispositivo." });
 
-        if (await _dbContext.ElementosSync.AsNoTracking().AnyAsync(
-                e => e.Activo &&
-                     ((e.CarpetaRemotaId.HasValue && folderIds.Contains(e.CarpetaRemotaId.Value)) ||
-                      (e.ArchivoRemotoId.HasValue && fileIds.Contains(e.ArchivoRemotoId.Value))),
-                cancellationToken))
-            return Conflict(new { message = "Hay asociaciones de sincronización activas. Desvincule o retire la selección antes de eliminar." });
-
         return null;
     }
 
@@ -598,7 +591,7 @@ public sealed class TrashController : ControllerBase
                         (e.ArchivoRemotoId.HasValue && fileIds.Contains(e.ArchivoRemotoId.Value)))
             .ToListAsync(cancellationToken);
 
-        // Los bloqueos asociados a dispositivos retirados también impiden
+        // Se retiran solo las asociaciones que apuntan a los elementos eliminados,\n        // incluidas las activas; las demás asociaciones del dispositivo se conservan.\n        // Los bloqueos asociados a dispositivos retirados también impiden
         // eliminar físicamente esos dispositivos.
         var retiredLocks = await _dbContext.BloqueosArchivos
             .Where(b => b.DispositivoId.HasValue && retiredDeviceIds.Contains(b.DispositivoId.Value))
