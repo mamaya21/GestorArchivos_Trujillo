@@ -1232,9 +1232,16 @@ public sealed class SelectiveSyncService
                     x.CarpetaRemotaId.HasValue &&
                     PathsEqual(x.RutaLocal, folderPath)).ToList();
                 if (folderMappings.Count != 1)
-                    throw new InvalidOperationException(
-                        $"La carpeta destino '{folderPath}' no tiene " +
-                        "una asociación remota única y verificable.");
+                {
+                    // La carpeta puede haberse seleccionado de nuevo tras
+                    // eliminarse en web. Su asociación se creará más adelante
+                    // en este ciclo; no inferir un movimiento ni impedir que
+                    // se cree la raíz. Conservar ambos archivos intactos.
+                    Console.WriteLine(
+                        $"[SyncGuard] Movimiento aplazado: carpeta destino sin " +
+                        $"asociación remota única: {folderPath}");
+                    continue;
+                }
 
                 var newName = Path.GetFileName(destination);
                 ValidateRemoteName(newName);
