@@ -80,6 +80,13 @@ export async function activateSyncOnThisComputer(reuseDeviceId?: string): Promis
     ? (localState as { hostName: string }).hostName.trim() : ''
   if (!hostName) throw new Error('Actualiza el cliente de sincronización para registrar el nombre real del equipo.')
 
+  const linkedDeviceId = localState && typeof localState === 'object' && 'deviceId' in localState &&
+    typeof (localState as { deviceId: unknown }).deviceId === 'string'
+    ? (localState as { deviceId: string }).deviceId : ''
+  if (linkedDeviceId && linkedDeviceId !== reuseDeviceId) {
+    throw new Error('Este equipo ya tiene una vinculación local. Desvincúlalo antes de registrarlo con otra cuenta.')
+  }
+
   const registration =
     await apiRequest<RegisterSyncDeviceResponse>(
       '/sync/devices/register',
