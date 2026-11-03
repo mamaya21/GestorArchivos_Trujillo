@@ -67,7 +67,7 @@ export async function ensureLocalSyncReady(): Promise<void> {
   }
 }
 
-export async function activateSyncOnThisComputer(reuseDeviceId?: string): Promise<void> {
+export async function activateSyncOnThisComputer(reuseDeviceId?: string, recoverLocalRegistration = false): Promise<void> {
   await ensureLocalSyncReady()
 
   const localControl = await fetch('http://127.0.0.1:47831/control', {
@@ -104,6 +104,7 @@ export async function activateSyncOnThisComputer(reuseDeviceId?: string): Promis
         body: JSON.stringify({
           name: hostName,
           reuseDeviceId,
+          recoverLocalRegistration,
           operatingSystem: 'Windows',
         }),
       },
