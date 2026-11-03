@@ -168,7 +168,7 @@
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
                             <ListView.ContextMenu>
                                 <ContextMenu>
-                                    <MenuItem Header="Renombrar" Click="Rename_Click"/>
+                                    <MenuItem Header="Copiar" Click="Copy_Click"/><MenuItem Header="Cortar" Click="Cut_Click"/><MenuItem Header="Pegar" Click="Paste_Click"/><Separator/><MenuItem Header="Renombrar" Click="Rename_Click"/>
                                     <MenuItem Header="Mover a papelera" Click="Delete_Click"/>
                                 </ContextMenu>
                             </ListView.ContextMenu>
