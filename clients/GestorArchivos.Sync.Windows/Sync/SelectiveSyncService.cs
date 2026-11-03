@@ -665,14 +665,29 @@ public sealed class SelectiveSyncService
                 ValidatePathWithoutLinks(oldPath);
                 if (File.Exists(destination))
                 {
-                    // Una copia local con el nombre destino no autoriza
-                    // sobrescribirla, aunque su hash coincida. Mantener
-                    // ambos archivos hasta resolver la identidad.
-                    Console.WriteLine($"[SyncRename] Ambos nombres presentes; se conserva el contenido: {oldPath} / {destination}");
-                    continue;
-                }
+                    // El nombre nuevo puede existir por una copia creada
+                    // durante el retraso del pull. Solo consolidar si ambos
+                    // contenidos coinciden con el ID remoto confirmado.
+                    ValidatePathWithoutLinks(destination);
+                    var oldHash = await HashLocalAsync(oldPath, cancellationToken);
+                    var destinationHash = await HashLocalAsync(destination, cancellationToken);
+                    if (!HashesEqual(oldHash, baseline.LocalHash) ||
+                        !HashesEqual(destinationHash, remote.HashSha256))
+                    {
+                        Console.WriteLine($"[SyncRename] Colisión con contenido diferente; se conservan ambos: {oldPath} / {destination}");
+                        continue;
+                    }
 
-                if (!HashesEqual(
+                    // Conservar la copia redundante en un área recuperable,
+                    // nunca borrarla, antes de actualizar la asociación.
+                    var recoveryDirectory = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                        "GestorArchivos", "Sync", "ArchivosRecuperados");
+                    Directory.CreateDirectory(recoveryDirectory);
+                    File.Move(oldPath, Path.Combine(recoveryDirectory,
+                        $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}_{Path.GetFileName(oldPath)}"));
+                }
+                else if (!HashesEqual(
                     await HashLocalAsync(oldPath, cancellationToken),
                     baseline.LocalHash))
                     throw new InvalidOperationException(
@@ -1945,6 +1960,17 @@ public sealed class SelectiveSyncService
         foreach (var localFile in localFiles)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // No confiar en la enumeración inicial: durante el ciclo
+            // el usuario puede borrar, renombrar o reutilizar un nombre.
+            if (!File.Exists(localFile.Value))
+                continue;
+            var latestSnapshot = await _api.GetSnapshotAsync(cancellationToken);
+            remoteFiles = latestSnapshot.Files
+                .Where(f => f.CarpetaId == remoteFolderId).ToList();
+            remoteFolders = latestSnapshot.Folders
+                .Where(f => f.CarpetaPadreId == remoteFolderId).ToList();
+            items = await _api.GetItemsAsync(cancellationToken);
 
             var matchingRemoteFiles = remoteFiles.Where(f =>
                 NamesEqual(f.Nombre, localFile.Key)).ToList();
