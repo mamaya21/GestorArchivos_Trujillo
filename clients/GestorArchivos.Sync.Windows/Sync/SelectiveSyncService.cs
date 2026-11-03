@@ -2044,15 +2044,22 @@ public sealed class SelectiveSyncService
                     throw new InvalidOperationException(
                         $"La asociación de '{localFile.Value}' tiene un tipo incompatible.");
 
-                // El archivo local conserva una asociación, pero su ID remoto
-                // ya no aparece en el snapshot. No tratarlo como un archivo
-                // nuevo: podría ser una eliminación o movimiento remoto.
-                // Conservar el archivo y la asociación sin bloquear otros
-                // archivos de la misma carpeta, incluso si está vacía en web.
+                // A reused local path can still point to a file in the web
+                // trash. The server's atomic upload safely rebinds that
+                // mapping to a new remote file, preserving the trashed file.
+                // Never infer deletion from an absent snapshot alone.
+                if (!await _api.IsItemTrashedAsync(
+                        existingMapping.SyncItemId, cancellationToken))
+                {
+                    Console.WriteLine(
+                        $"[SyncFolder] Archivo local conservado sin recrear en web " +
+                        $"por asociación remota pendiente: {localFile.Value}");
+                    continue;
+                }
+
                 Console.WriteLine(
-                    $"[SyncFolder] Archivo local conservado sin recrear en web " +
-                    $"por asociación remota pendiente: {localFile.Value}");
-                continue;
+                    $"[SyncFolder] Asociación anterior en Papelera; se creará " +
+                    $"una nueva versión remota para la ruta: {localFile.Value}");
             }
 
             ValidatePathWithoutLinks(localFile.Value);
