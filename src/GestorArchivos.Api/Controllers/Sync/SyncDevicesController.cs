@@ -135,6 +135,25 @@ public class SyncDevicesController : ControllerBase
         return Ok(new { active });
     }
 
+    [HttpGet("host-registration-state")]
+    public async Task<IActionResult> HostRegistrationState([FromQuery] string hostName, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(hostName) || hostName.Length > 255)
+            return BadRequest(new { message = "Nombre de equipo inválido." });
+
+        var userId = CurrentUserId();
+        var registrations = await _dbContext.DispositivosSync.AsNoTracking()
+            .Where(x => x.Nombre == hostName.Trim() && x.Activo)
+            .Select(x => new { x.Id, x.UsuarioId })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new
+        {
+            active = registrations.Count > 0,
+            linkedToCurrentAccount = registrations.Any(x => x.UsuarioId == userId)
+        });
+    }
+
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         RegisterSyncDeviceRequest request,
