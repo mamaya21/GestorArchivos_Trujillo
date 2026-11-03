@@ -1669,7 +1669,6 @@ export default function FilesPage() {
         }
         const previous = devices.filter(device => !device.active && !device.rootFolderDeleted)
         let reuseDeviceId: string | undefined
-        let reuseDeviceName: string | undefined
         if (previous.length > 0) {
           const choices = previous.map(device => `
             <label style="display:flex;gap:12px;align-items:flex-start;border:1px solid #d9dce4;border-radius:12px;padding:15px;cursor:pointer">
@@ -1708,7 +1707,6 @@ export default function FilesPage() {
             const selected = previous.find(device => device.deviceId === choice.value)
             if (!selected) throw new Error('Dispositivo anterior no válido')
             reuseDeviceId = selected.deviceId
-            reuseDeviceName = selected.deviceName
           } else {
             const confirmNew = await Swal.fire({
               icon: 'info',
@@ -1721,7 +1719,7 @@ export default function FilesPage() {
             if (!confirmNew.isConfirmed) return
           }
         }
-        await activateSyncOnThisComputer(reuseDeviceId, reuseDeviceName)
+        await activateSyncOnThisComputer(reuseDeviceId)
         setSyncLinkedHere(true)
         let selectorOpened = false
         try {
