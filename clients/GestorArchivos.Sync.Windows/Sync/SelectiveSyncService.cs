@@ -2285,9 +2285,28 @@ public sealed class SelectiveSyncService
             // únicamente a partir de la ruta y no retirar su contenido.
             if (File.Exists(localPath))
             {
-                Console.WriteLine(
-                    $"[SyncFolder] Archivo local conservado ante eliminación remota; identidad pendiente de verificar: {localPath}");
-                continue;
+                ValidatePathWithoutLinks(localPath);
+                var localHash = await HashLocalAsync(localPath, cancellationToken);
+                var previous = (await _baselines.LoadAsync(cancellationToken))
+                    .SingleOrDefault(x =>
+                        x.SyncItemId == item.SyncItemId &&
+                        x.RemoteFileId == remoteId &&
+                        PathsEqual(x.LocalPath, localPath));
+                if (previous is null ||
+                    !HashesEqual(localHash, previous.LocalHash))
+                {
+                    Console.WriteLine(
+                        $"[SyncFolder] Archivo local sin identidad comprobada o modificado; se conserva: {localPath}");
+                    continue;
+                }
+
+                var recoveryDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "GestorArchivos", "Sync", "ArchivosRecuperados");
+                Directory.CreateDirectory(recoveryDirectory);
+                File.Move(localPath, Path.Combine(recoveryDirectory,
+                    $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}_{Path.GetFileName(localPath)}"));
+                localFiles.Remove(Path.GetFileName(localPath));
             }
 
             await _api.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
