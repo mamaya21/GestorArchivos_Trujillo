@@ -649,8 +649,12 @@ public sealed class SelectiveSyncService
             if (items.Any(x => x.SyncItemId != item.SyncItemId &&
                 PathsEqual(x.RutaLocal, destination)) ||
                 Directory.Exists(destination))
-                throw new InvalidOperationException(
-                    $"Destino del renombrado remoto ocupado: '{destination}'.");
+            {
+                // Nunca reemplazar una asociación distinta: puede tratarse
+                // de una copia real con historial propio.
+                Console.WriteLine($"[SyncRename] Renombrado aplazado; destino asociado u ocupado: {destination}");
+                continue;
+            }
 
             // Recuperación tras una interrupción entre File.Move y
             // UpdateItemPathAsync: nunca sobrescribir el destino.
@@ -658,8 +662,13 @@ public sealed class SelectiveSyncService
             {
                 ValidatePathWithoutLinks(oldPath);
                 if (File.Exists(destination))
-                    throw new InvalidOperationException(
-                        $"Ambos nombres existen: '{oldPath}' y '{destination}'.");
+                {
+                    // Una copia local con el nombre destino no autoriza
+                    // sobrescribirla, aunque su hash coincida. Mantener
+                    // ambos archivos hasta resolver la identidad.
+                    Console.WriteLine($"[SyncRename] Ambos nombres presentes; se conserva el contenido: {oldPath} / {destination}");
+                    continue;
+                }
 
                 if (!HashesEqual(
                     await HashLocalAsync(oldPath, cancellationToken),
