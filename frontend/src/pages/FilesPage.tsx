@@ -1560,10 +1560,23 @@ export default function FilesPage() {
       }
 
       const linkedHere = active.find(d => d.deviceId === localState?.deviceId)
+      let hostRegistration: { active: boolean; linkedToCurrentAccount: boolean } | null = null
+      if (localState !== null) {
+        const hostResponse = await fetch('http://127.0.0.1:47831/control', { cache: 'no-store' })
+        if (hostResponse.ok) {
+          const host = await hostResponse.json() as { hostName?: string }
+          if (host.hostName) {
+            hostRegistration = await apiRequest<{ active: boolean; linkedToCurrentAccount: boolean }>(
+              `/sync/devices/host-registration-state?hostName=${encodeURIComponent(host.hostName)}`,
+            )
+          }
+        }
+      }
+      const linkedElsewhere = Boolean(hostRegistration?.active && !hostRegistration.linkedToCurrentAccount)
       setSyncLinkedHere(Boolean(linkedHere))
       const result = await Swal.fire({
         title: 'Sincronización',
-        html: `${active.length ? rows : '<p>No hay equipos activos.</p>'}
+        html: `${active.length ? rows : '<p>No hay equipos activos en esta cuenta.</p>'}\n          ${linkedElsewhere ? '<p style="color:#b91c1c;font-size:13px">Este equipo ya está vinculado a otra cuenta. Debes desvincularlo desde esa cuenta antes de activarlo aquí.</p>' : ''}
           <p style="font-size:13px">Estado de este equipo: ${localState === null ? 'Aplicación de sincronización no disponible' : !localState.deviceId || !linkedHere ? 'Desvinculado' : localState.paused ? 'Pausado' : 'En ejecución'}</p>
           <p style="font-size:13px">Las selecciones se administran desde el selector de sincronización. Desvincular conserva los archivos locales y remotos.</p>`,
         showCancelButton: true,
