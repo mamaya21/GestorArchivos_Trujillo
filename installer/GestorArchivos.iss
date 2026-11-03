@@ -58,7 +58,7 @@ begin
     ewWaitUntilTerminated, ExitCode);
   Result := Started and (ExitCode = 0);
   Log(Format('sc.exe %s | iniciado=%s | código=%d', [
-    Params, BoolToStr(Started), ExitCode]));
+    Params, IntToStr(Ord(Started)), ExitCode]));
 end;
 
 procedure ReplaceInFile(FileName, OldText, NewText: String);
