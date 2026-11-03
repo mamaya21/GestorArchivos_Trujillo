@@ -146,6 +146,8 @@ public sealed class SelectiveSyncService
         await GuardAgainstUnresolvedLocalMovesAsync(
             selections, cancellationToken);
 
+        await ReconcileInactiveFileMappingsAsync(selections, cancellationToken);
+
         await _mapping.PrepareMappingsAsync(cancellationToken);
         await _mapping.CreateMissingFoldersAsync(cancellationToken);
 
@@ -2116,6 +2118,78 @@ public sealed class SelectiveSyncService
                 baseline.RemoteVersion.Value,
                 baseline.RemoteHash!,
                 cancellationToken);
+        }
+    }
+
+    // An inactive association is historical, not permission to delete a file.
+    // Recover a leftover local copy only when the old verified baseline still
+    // matches, the path has no active owner, and the remote identity no longer
+    // belongs to its previous synchronized folder.
+    private async Task ReconcileInactiveFileMappingsAsync(
+        IReadOnlyList<Selection> selections,
+        CancellationToken cancellationToken)
+    {
+        if (_suppressDestructiveOperations)
+            return;
+
+        var inactive = await _api.GetInactiveItemsAsync(cancellationToken);
+        if (inactive.Count == 0)
+            return;
+
+        var active = await _api.GetItemsAsync(cancellationToken);
+        var snapshot = await _api.GetSnapshotAsync(cancellationToken);
+        var baselines = await _baselines.LoadAsync(cancellationToken);
+
+        foreach (var item in inactive.Where(x =>
+            x.Tipo == SyncItemType.File && x.ArchivoRemotoId.HasValue))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var path = Path.GetFullPath(item.RutaLocal);
+            if (!IsSelectedItemPath(path, selections) ||
+                active.Any(x => PathsEqual(x.RutaLocal, path)) ||
+                !File.Exists(path) || Directory.Exists(path))
+                continue;
+
+            var baseline = baselines.SingleOrDefault(x =>
+                x.SyncItemId == item.SyncItemId &&
+                x.RemoteFileId == item.ArchivoRemotoId &&
+                PathsEqual(x.LocalPath, path));
+            if (baseline is null)
+                continue;
+
+            // A remote file still in the mapped parent is not a confirmed
+            // departure. Inactive history alone does not authorize archiving.
+            var parent = Path.GetDirectoryName(path);
+            var parentMapping = active.SingleOrDefault(x =>
+                x.Tipo == SyncItemType.Folder &&
+                parent is not null && PathsEqual(x.RutaLocal, parent));
+            var remote = snapshot.Files.SingleOrDefault(x =>
+                x.Id == item.ArchivoRemotoId.Value);
+            if (remote is not null &&
+                (parentMapping is null ||
+                 parentMapping.CarpetaRemotaId == remote.CarpetaId))
+                continue;
+
+            if (remote is null &&
+                !await _api.IsItemTrashedAsync(item.SyncItemId, cancellationToken))
+                continue;
+
+            ValidatePathWithoutLinks(path);
+            var hash = await HashLocalAsync(path, cancellationToken);
+            if (!HashesEqual(hash, baseline.LocalHash))
+            {
+                Console.WriteLine($"[SyncMove] Asociación inactiva con contenido local distinto; se conserva: {path}");
+                continue;
+            }
+
+            var recoveryDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "GestorArchivos", "Sync", "ArchivosRecuperados");
+            Directory.CreateDirectory(recoveryDirectory);
+            var recovered = Path.Combine(recoveryDirectory,
+                $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}_{Path.GetFileName(path)}");
+            File.Move(path, recovered);
+            Console.WriteLine($"[SyncMove] Copia local de asociación inactiva recuperada: {recovered}");
         }
     }
 
