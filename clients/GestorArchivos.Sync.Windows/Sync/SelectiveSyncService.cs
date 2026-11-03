@@ -2066,8 +2066,6 @@ public sealed class SelectiveSyncService
         if (_suppressDestructiveOperations)
             return;
 
-        var baselines = await _baselines.LoadAsync(cancellationToken);
-
         var folderPath = Path.GetFullPath(localFolderPath);
 
         var folderItems = items
@@ -2097,80 +2095,44 @@ public sealed class SelectiveSyncService
 
             var localPath = Path.GetFullPath(item.RutaLocal);
 
-            var baseline = baselines.FirstOrDefault(x =>
-                x.SyncItemId == item.SyncItemId &&
-                x.RemoteFileId == remoteId);
+            // La ausencia del snapshot no demuestra una eliminación: puede
+            // tratarse de un traslado, un renombrado o un error transitorio.
+            // Solo una confirmación explícita de la Papelera web autoriza
+            // retirar la copia local y desactivar su asociación.
+            if (!await _api.IsItemTrashedAsync(item.SyncItemId, cancellationToken))
+            {
+                Console.WriteLine(
+                    $"[SyncFolder] Archivo remoto ausente, sin eliminación confirmada: {localPath}");
+                continue;
+            }
 
-            // Una ruta ocupada por una carpeta no debe tratarse
-            // como un archivo eliminado.
+            // Una eliminación confirmada debe propagarse incluso si se perdió
+            // el baseline. Nunca destruir datos: conservar una copia recuperable
+            // en ProgramData, accesible fuera del perfil del servicio Windows.
             if (Directory.Exists(localPath))
             {
-                throw new InvalidOperationException(
-                    $"Conflicto de tipo en '{localPath}'.");
+                Console.WriteLine(
+                    $"[SyncFolder] Conflicto de tipo; eliminación local aplazada: {localPath}");
+                continue;
             }
 
             if (File.Exists(localPath))
             {
-                // Para retirar o desvincular un archivo existente
-                // se exige un baseline confiable.
-                if (baseline is null ||
-                    string.IsNullOrWhiteSpace(baseline.LocalHash) ||
-                    string.IsNullOrWhiteSpace(baseline.RemoteHash) ||
-                    !HashesEqual(
-                        baseline.LocalHash,
-                        baseline.RemoteHash))
-                {
-                    // No hay evidencia suficiente para retirar el archivo ni
-                    // desvincularlo. Mantener ambos intactos y permitir que
-                    // continúe la sincronización de los demás elementos.
-                    Console.WriteLine(
-                        $"[SyncFolder] Eliminación remota pendiente de revisión: " +
-                        $"'{localPath}' sin baseline confiable. Archivo conservado.");
-                    continue;
-                }
-
                 ValidatePathWithoutLinks(localPath);
-
-                var currentHash = await HashLocalAsync(
-                    localPath,
-                    cancellationToken);
-
-                if (HashesEqual(currentHash, baseline.LocalHash))
-                {
-                    // El contenido coincide con la última sincronización.
-                    // Conservar una copia recuperable antes de retirarlo.
-                    var recoveryDirectory = Path.Combine(
-                        Environment.GetFolderPath(
-                            Environment.SpecialFolder.LocalApplicationData),
-                        "GestorArchivos",
-                        "Sync",
-                        "ArchivosRecuperados");
-
-                    Directory.CreateDirectory(recoveryDirectory);
-
-                    var recoveryPath = Path.Combine(
-                        recoveryDirectory,
-                        $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_" +
-                        $"{Guid.NewGuid():N}_" +
-                        Path.GetFileName(localPath));
-
-                    File.Move(localPath, recoveryPath);
-
-                    localFiles.Remove(
-                        Path.GetFileName(localPath));
-                }
-
-                // Si el hash cambió, conservar el archivo local.
-                // Después de desvincularlo podrá tratarse como
-                // archivo nuevo durante LOCAL -> REMOTO.
+                var recoveryDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "GestorArchivos", "Sync", "ArchivosRecuperados");
+                Directory.CreateDirectory(recoveryDirectory);
+                var recoveryPath = Path.Combine(recoveryDirectory,
+                    $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}_{Path.GetFileName(localPath)}");
+                File.Move(localPath, recoveryPath);
+                localFiles.Remove(Path.GetFileName(localPath));
+                Console.WriteLine(
+                    $"[SyncFolder] Eliminación web confirmada. Copia local recuperable: {recoveryPath}");
             }
 
-            // También se ejecuta si el archivo ya no existe
-            // físicamente. Así se limpian asociaciones antiguas
-            // de eliminaciones procesadas en ciclos anteriores.
-            await _api.DeleteItemAsync(
-                item.SyncItemId,
-                cancellationToken);
+            await _api.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
+
         }
     }
 
