@@ -16,7 +16,7 @@ export function isWindowsDesktop(): boolean {
   return /Windows NT/i.test(ua) && !/Android|iPhone|iPad|Mobile/i.test(ua)
 }
 
-export const CLIENT_INSTALLER_URL = import.meta.env.VITE_CLIENT_INSTALLER_URL as string | undefined
+export const CLIENT_INSTALLER_URL = (import.meta.env.VITE_CLIENT_INSTALLER_URL as string | undefined) || '/instaladores/GestorArchivos-Instalador-x64.exe'
 
 export async function checkSelectorReady(): Promise<boolean> {
   try {
