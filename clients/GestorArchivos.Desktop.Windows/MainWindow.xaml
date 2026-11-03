@@ -167,9 +167,20 @@
                                   MouseDoubleClick="ItemsList_DoubleClick" SelectionMode="Extended" PreviewMouseLeftButtonDown="ItemsList_MouseDown" PreviewMouseMove="ItemsList_MouseMove" PreviewMouseLeftButtonUp="ItemsList_MouseUp"
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
                             <ListView.ContextMenu>
-                                <ContextMenu>
-                                    <MenuItem Header="Copiar" Click="Copy_Click"/><MenuItem Header="Cortar" Click="Cut_Click"/><MenuItem Header="Pegar" Click="Paste_Click"/><Separator/><MenuItem Header="Renombrar" Click="Rename_Click"/>
-                                    <MenuItem Header="Mover a papelera" Click="Delete_Click"/>
+                                <ContextMenu Opened="ItemsContextMenu_Opened" Background="White" BorderBrush="#DDE5F2" BorderThickness="1" Padding="5">
+                                    <ContextMenu.Resources>
+                                        <Style TargetType="MenuItem">
+                                            <Setter Property="Padding" Value="12,9"/>
+                                            <Setter Property="FontSize" Value="13"/>
+                                            <Setter Property="Foreground" Value="#24334F"/>
+                                        </Style>
+                                    </ContextMenu.Resources>
+                                    <MenuItem x:Name="CopyMenuItem" Header="Copiar" InputGestureText="Ctrl+C" Click="Copy_Click"/>
+                                    <MenuItem x:Name="CutMenuItem" Header="Cortar" InputGestureText="Ctrl+X" Click="Cut_Click"/>
+                                    <MenuItem x:Name="PasteMenuItem" Header="Pegar" InputGestureText="Ctrl+V" Click="Paste_Click"/>
+                                    <Separator/>
+                                    <MenuItem x:Name="RenameMenuItem" Header="Renombrar" Click="Rename_Click"/>
+                                    <MenuItem x:Name="DeleteMenuItem" Header="Mover a papelera" Click="Delete_Click"/>
                                 </ContextMenu>
                             </ListView.ContextMenu>
                             <ListView.View>
