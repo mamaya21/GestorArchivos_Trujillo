@@ -487,6 +487,10 @@ public partial class Form1 : Form
                 IsInsideFolder(existing.Path, fullPath));
         }
 
+        // Una nueva selección de la misma ruta revoca expresamente
+        // cualquier retirada todavía pendiente, incluida la persistida.
+        // Evita que una solicitud antigua elimine una raíz recién vinculada.
+        _removals.RemoveAll(x => IsSamePath(x.Path, fullPath));
         _selections.Add(new SyncSelection
         {
             Path = fullPath,
@@ -577,6 +581,18 @@ public partial class Form1 : Form
                 {
                     WriteIndented = true
                 });
+
+            // Las retiradas antiguas de rutas nuevamente seleccionadas no
+            // deben sobrevivir en el archivo compartido.
+            if (File.Exists(RemovalPath))
+            {
+                var pending = JsonSerializer.Deserialize<List<RemovalRequest>>(
+                    File.ReadAllText(RemovalPath)) ?? new();
+                var retained = pending.Where(x => !_selections.Any(y =>
+                    IsSamePath(x.Path, y.Path))).ToList();
+                if (retained.Count != pending.Count)
+                    WriteAtomically(RemovalPath, JsonSerializer.Serialize(retained));
+            }
 
             // Publicar primero la nueva selección: el servicio nunca debe
             // ver una retirada mientras la selección antigua sigue activa.
