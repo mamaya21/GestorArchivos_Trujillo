@@ -164,7 +164,7 @@
                     </Grid>
                     <Border Grid.Row="1" BorderBrush="#E5EBF5" BorderThickness="1" CornerRadius="10">
                         <ListView x:Name="ItemsList" BorderThickness="0" Background="Transparent"
-                                  MouseDoubleClick="ItemsList_DoubleClick" SelectionMode="Extended"
+                                  MouseDoubleClick="ItemsList_DoubleClick" SelectionMode="Extended" PreviewMouseLeftButtonDown="ItemsList_MouseDown"
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto">
                             <ListView.ContextMenu>
                                 <ContextMenu>
