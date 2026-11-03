@@ -1561,8 +1561,19 @@ public sealed class SelectiveSyncService
                 (existingMapping.Tipo != SyncItemType.Folder ||
                  existingMapping.CarpetaRemotaId != remoteFolder.Id))
             {
-                throw new InvalidOperationException(
-                    $"La carpeta '{localChild}' tiene otra asociación remota.");
+                // A trashed folder may have left an obsolete mapping on a
+                // reused local path. Detach only after server confirmation;
+                // never delete the directory or its descendants.
+                if (existingMapping.Tipo == SyncItemType.Folder &&
+                    await _api.IsItemTrashedAsync(existingMapping.SyncItemId, cancellationToken))
+                {
+                    await _api.DetachTrashedItemAsync(existingMapping.SyncItemId, cancellationToken);
+                    Console.WriteLine($"[SyncFolder] Asociación de carpeta eliminada retirada: {localChild}");
+                    // Re-read mappings before processing the same folder next cycle.
+                    continue;
+                }
+                Console.WriteLine($"[SyncFolder] Carpeta con identidad remota distinta; conservada: {localChild}");
+                continue;
             }
 
             var mappedElsewhere = items.FirstOrDefault(x =>
@@ -1904,10 +1915,19 @@ public sealed class SelectiveSyncService
             else if (fileItem.Tipo != SyncItemType.File ||
                      fileItem.ArchivoRemotoId != remoteFile.Id)
             {
-                // La ruta pertenece a otra identidad remota (por ejemplo,
-                // copia seguida de renombrado). No sobrescribir, descargar
-                // ni cambiar la asociación: aislar esta colisión y continuar.
-                Console.WriteLine($"[SyncFolder] Asociación remota diferente; archivo conservado: {localPath}");
+                // An old trashed identity can remain bound to a path reused by
+                // another remote file. Only the server can certify it is trashed.
+                // Never replace an active identity or overwrite local content.
+                if (fileItem.Tipo == SyncItemType.File &&
+                    await _api.IsItemTrashedAsync(fileItem.SyncItemId, cancellationToken))
+                {
+                    await _api.DetachTrashedItemAsync(fileItem.SyncItemId, cancellationToken);
+                    Console.WriteLine($"[SyncFolder] Asociación eliminada retirada; contenido local conservado: {localPath}");
+                }
+                else
+                {
+                    Console.WriteLine($"[SyncFolder] Asociación remota diferente; archivo conservado: {localPath}");
+                }
                 continue;
             }
 
