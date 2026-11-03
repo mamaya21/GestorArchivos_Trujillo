@@ -168,6 +168,36 @@ public class SyncController : ControllerBase
         return Ok(items);
     }
 
+    // Historical mappings are read separately so normal synchronization never
+    // mistakes inactive associations for current ownership of a local path.
+    [HttpGet("items/inactive")]
+    public async Task<IActionResult> GetInactiveItems(CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (!await _permissionService.HasPermissionAsync(
+                userId, device.RootFolderId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+
+        var items = await _dbContext.ElementosSync.AsNoTracking()
+            .Where(x => x.DispositivoId == deviceId && !x.Activo)
+            .OrderBy(x => x.RutaLocal)
+            .Select(x => new
+            {
+                syncItemId = x.Id,
+                x.RutaLocal,
+                x.Tipo,
+                x.CarpetaRemotaId,
+                x.ArchivoRemotoId,
+                x.FechaCreacion,
+                x.UltimaSincronizacionUtc
+            })
+            .ToListAsync(cancellationToken);
+        return Ok(items);
+    }
+
     [HttpPost("items")]
     public async Task<IActionResult> RegisterItem(
         RegisterSyncItemRequest request,
