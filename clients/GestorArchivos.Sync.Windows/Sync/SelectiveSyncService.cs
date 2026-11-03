@@ -136,13 +136,15 @@ public sealed class SelectiveSyncService
         await CaptureFolderIdentitiesAsync(cancellationToken);
         await ReconcileLocalFolderMovesAsync(selections, cancellationToken);
 
-        // Antes de cualquier escritura, detectar movimientos o renombrados locales
-        // ambiguos. Sin esta barrera el recorrido por nombre puede crear otro
-        // archivo remoto y después enviar el original a la papelera.
+        // Aplicar primero los renombrados/movimientos confirmados por ID
+        // remoto. Si se examina antes el nombre local antiguo, una copia
+        // recién creada puede confundirse con un movimiento local y producir
+        // duplicados o cambios en sentido contrario.
+        await ReconcileRemoteFileRenamesAsync(selections, cancellationToken);
+
+        // Solo después detectar movimientos iniciados desde Windows.
         await GuardAgainstUnresolvedLocalMovesAsync(
             selections, cancellationToken);
-
-        await ReconcileRemoteFileRenamesAsync(selections, cancellationToken);
 
         await _mapping.PrepareMappingsAsync(cancellationToken);
         await _mapping.CreateMissingFoldersAsync(cancellationToken);
