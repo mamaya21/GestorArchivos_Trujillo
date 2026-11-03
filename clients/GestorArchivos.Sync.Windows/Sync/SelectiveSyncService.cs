@@ -173,6 +173,15 @@ public sealed class SelectiveSyncService
                         $"Asociación remota inválida: '{selection.Path}'.");
                 }
 
+                // Una raíz seleccionada puede estar temporalmente ausente
+                // (renombrada, desconectada o eliminada). No abortar las demás
+                // selecciones ni inferir una eliminación remota.
+                if (!Directory.Exists(selection.Path))
+                {
+                    Console.WriteLine($"[SyncRoot] Carpeta local ausente; sincronización aplazada: {selection.Path}");
+                    continue;
+                }
+
                 await SyncFolderAsync(
                     remoteFolderId,
                     selection.Path,
@@ -1805,8 +1814,8 @@ public sealed class SelectiveSyncService
 
             if (existsLocally && fileItem is null)
             {
-                throw new InvalidOperationException(
-                    $"Colisión local/remota sin asociación: '{localPath}'.");
+                Console.WriteLine($"[SyncFolder] Colisión local/remota sin asociación; archivo conservado: {localPath}");
+                continue;
             }
 
             if (fileItem is null)
@@ -1831,8 +1840,10 @@ public sealed class SelectiveSyncService
                             $"Movimiento remoto sin baseline confiable: '{mappedElsewhere.RutaLocal}'.");
 
                     if (File.Exists(localPath) || Directory.Exists(localPath))
-                        throw new InvalidOperationException(
-                            $"Destino local ocupado: '{localPath}'.");
+                    {
+                        Console.WriteLine($"[SyncFolder] Movimiento remoto aplazado; destino ocupado: {localPath}");
+                        continue;
+                    }
 
                     if (File.Exists(mappedElsewhere.RutaLocal))
                     {
@@ -1885,8 +1896,11 @@ public sealed class SelectiveSyncService
             else if (fileItem.Tipo != SyncItemType.File ||
                      fileItem.ArchivoRemotoId != remoteFile.Id)
             {
-                throw new InvalidOperationException(
-                    $"Asociación remota diferente: '{localPath}'.");
+                // La ruta pertenece a otra identidad remota (por ejemplo,
+                // copia seguida de renombrado). No sobrescribir, descargar
+                // ni cambiar la asociación: aislar esta colisión y continuar.
+                Console.WriteLine($"[SyncFolder] Asociación remota diferente; archivo conservado: {localPath}");
+                continue;
             }
 
             try
