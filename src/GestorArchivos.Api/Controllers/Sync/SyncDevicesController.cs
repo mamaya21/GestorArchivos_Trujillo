@@ -127,6 +127,14 @@ public class SyncDevicesController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("{deviceId:guid}/registration-state")]
+    public async Task<IActionResult> RegistrationState(Guid deviceId, CancellationToken cancellationToken)
+    {
+        var active = await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.Id == deviceId && x.Activo, cancellationToken);
+        return Ok(new { active });
+    }
+
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         RegisterSyncDeviceRequest request,
