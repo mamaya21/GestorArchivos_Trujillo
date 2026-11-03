@@ -7,7 +7,7 @@ namespace GestorArchivos.Sync.Windows.Activation;
 
 public sealed class ActivationListenerService : BackgroundService
 {
-    private const string AllowedOrigin = "http://localhost:5173";
+    private static readonly string AllowedOrigin = Environment.GetEnvironmentVariable("GESTOR_ARCHIVOS_WEB_ORIGIN")?.TrimEnd('/') ?? "http://localhost:5173";
     private static readonly string PausePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "GestorArchivos", "Sync", "paused.flag");
