@@ -87,7 +87,6 @@ begin
   RegWriteStringValue(HKLM,
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
     'GESTOR_ARCHIVOS_WEB_ORIGIN', WebUrl);
-  SetEnvironmentVariable('GESTOR_ARCHIVOS_WEB_ORIGIN', WebUrl);
 
   { Una reinstalación debe actualizar el servicio existente. }
   RunSC('stop "' + ServiceKey + '"');
