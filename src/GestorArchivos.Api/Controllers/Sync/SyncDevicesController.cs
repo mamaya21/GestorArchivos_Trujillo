@@ -172,8 +172,8 @@ public class SyncDevicesController : ControllerBase
         if (request.ReuseDeviceId.HasValue && existing is null)
             return NotFound(new { message = "No se encontró el dispositivo anterior en esta cuenta." });
 
-        if (existing?.Activo == true)
-            return Conflict(new { message = "El dispositivo seleccionado ya está activo." });
+        if (existing?.Activo == true && !request.RecoverLocalRegistration)
+            return Conflict(new { message = "El dispositivo está activo. Confirme expresamente la recuperación del registro local." });
 
         if (existing is not null && await _dbContext.Carpetas.AnyAsync(x => x.Id == existing.CarpetaRaizId && x.EnPapelera, cancellationToken))
             return Conflict(new { message = "La raíz anterior fue retirada. Registre una sincronización nueva." });
@@ -321,4 +321,5 @@ public class SyncDevicesController : ControllerBase
 public sealed record RegisterSyncDeviceRequest(
     string Name,
     string OperatingSystem,
-    Guid? ReuseDeviceId = null);
+    Guid? ReuseDeviceId = null,
+    bool RecoverLocalRegistration = false);
