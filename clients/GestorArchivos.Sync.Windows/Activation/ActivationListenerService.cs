@@ -96,11 +96,109 @@ public sealed class ActivationListenerService : BackgroundService
                 (context.Request.Url?.AbsolutePath == "/activate" ||
                  context.Request.Url?.AbsolutePath == "/control" ||
                  context.Request.Url?.AbsolutePath == "/deactivate" ||
-                 context.Request.Url?.AbsolutePath == "/quiesce"))
+                 context.Request.Url?.AbsolutePath == "/quiesce" ||
+                 context.Request.Url?.AbsolutePath == "/selections"))
             {
                 context.Response.StatusCode =
                     (int)HttpStatusCode.NoContent;
 
+                context.Response.Close();
+                return;
+            }
+
+            if (context.Request.Url?.AbsolutePath == "/selections")
+            {
+                var selectionsPath = Path.Combine(SyncDirectory, "selections.json");
+                var removalPath = Path.Combine(SyncDirectory, "removal-requests.json");
+                if (context.Request.HttpMethod == "GET")
+                {
+                    context.Response.ContentType = "application/json";
+                    var json = File.Exists(selectionsPath)
+                        ? await File.ReadAllTextAsync(selectionsPath, cancellationToken) : "[]";
+                    await using var writer = new StreamWriter(context.Response.OutputStream);
+                    await writer.WriteAsync(json);
+                    await writer.FlushAsync(cancellationToken);
+                    context.Response.Close();
+                    return;
+                }
+
+                if (context.Request.HttpMethod == "POST")
+                {
+                    using var payload = await JsonDocument.ParseAsync(
+                        context.Request.InputStream, cancellationToken: cancellationToken);
+                    if (!payload.RootElement.TryGetProperty("selections", out var selections) ||
+                        selections.ValueKind != JsonValueKind.Array ||
+                        !payload.RootElement.TryGetProperty("removals", out var removals) ||
+                        removals.ValueKind != JsonValueKind.Array)
+                    {
+                        context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        context.Response.Close();
+                        return;
+                    }
+
+                    // Validar los datos antes de modificar la configuración persistida.
+                    var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var selection in selections.EnumerateArray())
+                    {
+                        if (!selection.TryGetProperty("Path", out var path) ||
+                            path.ValueKind != JsonValueKind.String ||
+                            string.IsNullOrWhiteSpace(path.GetString()) ||
+                            !Path.IsPathFullyQualified(path.GetString()!) ||
+                            !selection.TryGetProperty("Kind", out var kind) ||
+                            kind.ValueKind != JsonValueKind.Number ||
+                            !kind.TryGetInt32(out var kindValue) || kindValue is < 0 or > 1 ||
+                            !paths.Add(Path.GetFullPath(path.GetString()!)))
+                        {
+                            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                            context.Response.Close();
+                            return;
+                        }
+                    }
+                    foreach (var removal in removals.EnumerateArray())
+                    {
+                        if (!removal.TryGetProperty("Path", out var path) ||
+                            path.ValueKind != JsonValueKind.String ||
+                            string.IsNullOrWhiteSpace(path.GetString()) ||
+                            !Path.IsPathFullyQualified(path.GetString()!) ||
+                            !removal.TryGetProperty("Kind", out var kind) ||
+                            kind.ValueKind != JsonValueKind.Number ||
+                            !kind.TryGetInt32(out var kindValue) || kindValue is < 0 or > 1 ||
+                            !removal.TryGetProperty("SendToTrash", out var trash) ||
+                            (trash.ValueKind != JsonValueKind.True && trash.ValueKind != JsonValueKind.False))
+                        {
+                            context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
+                            context.Response.Close();
+                            return;
+                        }
+                    }
+
+                    Directory.CreateDirectory(SyncDirectory);
+                    var existingRemovals = File.Exists(removalPath)
+                        ? JsonSerializer.Deserialize<List<JsonElement>>(
+                            await File.ReadAllTextAsync(removalPath, cancellationToken)) ?? new()
+                        : new List<JsonElement>();
+                    var retained = existingRemovals.Where(x =>
+                        x.TryGetProperty("Path", out var p) &&
+                        !paths.Contains(Path.GetFullPath(p.GetString()!))).ToList();
+                    foreach (var removal in removals.EnumerateArray())
+                    {
+                        var path = removal.GetProperty("Path").GetString()!;
+                        if (!retained.Any(x => x.TryGetProperty("Path", out var p) &&
+                            string.Equals(p.GetString(), path, StringComparison.OrdinalIgnoreCase)))
+                            retained.Add(removal.Clone());
+                    }
+
+                    // Primero publicar selecciones, luego retiradas: el motor no debe
+                    // procesar una retirada mientras la selección anterior sigue activa.
+                    await WriteConfigurationAsync(selectionsPath, selections.GetRawText(), cancellationToken);
+                    await WriteConfigurationAsync(removalPath, JsonSerializer.Serialize(retained), cancellationToken);
+                    var pending = Path.Combine(SyncDirectory, "selection-pending.flag");
+                    if (File.Exists(pending)) File.Delete(pending);
+                    context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+                    context.Response.Close();
+                    return;
+                }
+                context.Response.StatusCode = (int)HttpStatusCode.MethodNotAllowed;
                 context.Response.Close();
                 return;
             }
@@ -253,6 +351,20 @@ public sealed class ActivationListenerService : BackgroundService
 
                 context.Response.Close();
             }
+        }
+    }
+
+    private static async Task WriteConfigurationAsync(string path, string json, CancellationToken token)
+    {
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary, json, token);
+            File.Move(temporary, path, true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
         }
     }
 
