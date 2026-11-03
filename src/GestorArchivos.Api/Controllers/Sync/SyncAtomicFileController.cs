@@ -135,31 +135,21 @@ public sealed class SyncAtomicFileController : ControllerBase
             .ThenByDescending(x => x.FechaCreacion)
             .FirstOrDefaultAsync(cancellationToken);
 
-        // An inactive association belongs to a previous selection of this
-        // local path. Reuse the mapping row for the new file without deleting
-        // or modifying the previously referenced remote file.
-        var reuseInactiveMapping = existingItem is { Activo: false };
-        var reuseTrashedMapping = false;
-        if (existingItem is not null && !reuseInactiveMapping)
+        // Historical rows must retain their remote identities. If the current
+        // mapping points to a trashed file, deactivate it and create a fresh
+        // mapping for the new upload within the same transaction.
+        var deactivateTrashedMapping = false;
+        if (existingItem is { Activo: true })
         {
-            if (existingItem.Tipo == TipoElementoSync.Archivo &&
-                existingItem.ArchivoRemotoId.HasValue)
-            {
-                reuseTrashedMapping = await _db.Archivos.AsNoTracking().AnyAsync(
-                    x => x.Id == existingItem.ArchivoRemotoId.Value &&
-                         x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
-            }
+            if (existingItem.Tipo != TipoElementoSync.Archivo ||
+                !existingItem.ArchivoRemotoId.HasValue)
+                return Conflict(new { message = "La ruta local ya tiene otra asociación." });
 
-            if (!reuseTrashedMapping && (existingItem.Tipo != TipoElementoSync.Archivo ||
-                !existingItem.ArchivoRemotoId.HasValue))
-            {
-                return Conflict(new
-                {
-                    message = "La ruta local ya tiene otra asociación."
-                });
-            }
+            deactivateTrashedMapping = await _db.Archivos.AsNoTracking().AnyAsync(
+                x => x.Id == existingItem.ArchivoRemotoId.Value &&
+                     x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
 
-            if (!reuseTrashedMapping && existingItem.ArchivoRemotoId is Guid mappedFileId)
+            if (!deactivateTrashedMapping && existingItem.ArchivoRemotoId is Guid mappedFileId)
             {
             var existingFile = await _db.Archivos
                 .AsNoTracking()
@@ -280,26 +270,25 @@ public sealed class SyncAtomicFileController : ControllerBase
                 CreadoPorUsuarioId = userId
             };
 
-            var syncItem = reuseTrashedMapping || reuseInactiveMapping
-                ? await _db.ElementosSync.SingleAsync(
-                    x => x.Id == existingItem!.Id, cancellationToken)
-                : new ElementoSync
-                {
-                    DispositivoId = deviceId,
-                    RutaLocal = localPath,
-                    Tipo = TipoElementoSync.Archivo,
-                    ArchivoRemotoId = fileId
-                };
-            if (reuseTrashedMapping || reuseInactiveMapping)
+            // Keep historical mappings immutable; the filtered unique index
+            // permits only one active mapping per device and local path.
+            if (deactivateTrashedMapping)
             {
-                syncItem.Tipo = TipoElementoSync.Archivo;
-                syncItem.ArchivoRemotoId = fileId;
-                syncItem.Activo = true;
+                var oldMapping = await _db.ElementosSync.SingleAsync(
+                    x => x.Id == existingItem!.Id, cancellationToken);
+                oldMapping.Activo = false;
             }
 
+            var syncItem = new ElementoSync
+            {
+                DispositivoId = deviceId,
+                RutaLocal = localPath,
+                Tipo = TipoElementoSync.Archivo,
+                ArchivoRemotoId = fileId
+            };
+
             _db.Archivos.Add(remoteFile);
-            if (!reuseTrashedMapping && !reuseInactiveMapping)
-                _db.ElementosSync.Add(syncItem);
+            _db.ElementosSync.Add(syncItem);
 
             await _changes.RegisterAsync(
                 folderId,
