@@ -114,7 +114,7 @@ public sealed class ActivationListenerService : BackgroundService
                     var registeredDevice = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
                     await JsonSerializer.SerializeAsync(
                         context.Response.OutputStream,
-                        new { paused, deviceId = registeredDevice?.DeviceId },
+                        new { paused, deviceId = registeredDevice?.DeviceId, hostName = Environment.MachineName },
                         cancellationToken: cancellationToken);
                     context.Response.Close();
                     return;
