@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { ApiError, apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
-import { activateSyncOnThisComputer } from '../sync/syncActivation'
+import { activateSyncOnThisComputer, ensureLocalSyncReady, isWindowsDesktop } from '../sync/syncActivation'
 import type {
   FileItem,
   Folder,
@@ -1536,6 +1536,7 @@ export default function FilesPage() {
 
   async function openSyncManagement() {
     try {
+      await ensureLocalSyncReady()
       const devices = await apiRequest<Array<{
         deviceId: string
         deviceName: string
@@ -1769,7 +1770,7 @@ export default function FilesPage() {
     >
       <div className="file-page-heading">
         <h1>Archivos</h1>
-          <details className="file-sync-dropdown" onToggle={(event) => {
+          {isWindowsDesktop() && <details className="file-sync-dropdown" onToggle={(event) => {
               if (event.currentTarget.open) void refreshSyncLinkStatus()
             }}>
             <summary title="Opciones de sincronización">Sincronización <span aria-hidden="true">⌄</span></summary>
@@ -1794,7 +1795,7 @@ export default function FilesPage() {
                 void openSyncManagement()
               }}>Administrar sincronización</button>
             </div>
-          </details>
+          </details>}
       </div>
       <div className="file-hidden-inputs">
           <input
