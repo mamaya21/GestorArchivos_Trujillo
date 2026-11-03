@@ -2182,11 +2182,22 @@ public sealed class SelectiveSyncService
                     if (File.Exists(orphanPath))
                     {
                         ValidatePathWithoutLinks(orphanPath);
-                        if (!HashesEqual(
-                            await HashLocalAsync(orphanPath, cancellationToken),
-                            active.HashSha256))
+                        var localHash = await HashLocalAsync(orphanPath, cancellationToken);
+                        var previous = (await _baselines.LoadAsync(cancellationToken))
+                            .SingleOrDefault(x =>
+                                x.SyncItemId == item.SyncItemId &&
+                                x.RemoteFileId == remoteId &&
+                                PathsEqual(x.LocalPath, orphanPath));
+
+                        // A remote replacement may change the destination hash.
+                        // The old local file is safe to archive only when its
+                        // content still matches the last verified local baseline.
+                        // Never discard local edits or infer identity from a name.
+                        var unchangedLocal = previous is not null &&
+                            HashesEqual(localHash, previous.LocalHash);
+                        if (!unchangedLocal)
                         {
-                            Console.WriteLine($"[SyncMove] Archivo local modificado; se conserva: {orphanPath}");
+                            Console.WriteLine($"[SyncMove] Archivo local sin baseline confiable o modificado; se conserva: {orphanPath}");
                             continue;
                         }
 
