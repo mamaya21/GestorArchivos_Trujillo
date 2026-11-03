@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { ApiError, apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
-import { activateSyncOnThisComputer, ensureLocalSyncReady, isWindowsDesktop } from '../sync/syncActivation'
+import { activateSyncOnThisComputer, isWindowsDesktop } from '../sync/syncActivation'
 import type {
   FileItem,
   Folder,
@@ -1536,7 +1536,6 @@ export default function FilesPage() {
 
   async function openSyncManagement() {
     try {
-      await ensureLocalSyncReady()
       const devices = await apiRequest<Array<{
         deviceId: string
         deviceName: string
