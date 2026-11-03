@@ -15,6 +15,8 @@ public interface ISyncApiClient
     Task<IReadOnlyList<SyncItem>> GetItemsAsync(
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<SyncItem>> GetInactiveItemsAsync(CancellationToken cancellationToken = default);
+
     Task<SyncSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken = default);
 
