@@ -7,7 +7,10 @@ namespace GestorArchivos.Sync.Selector.Windows;
 internal static class Program
 {
     private const string AgentArgument = "--agent";
-    private static readonly string AllowedOrigin = (Environment.GetEnvironmentVariable("GESTOR_ARCHIVOS_WEB_ORIGIN")\n        ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",\n            "GESTOR_ARCHIVOS_WEB_ORIGIN", null) as string\n        ?? "http://localhost:5173").TrimEnd('/');
+    private static readonly string AllowedOrigin = (Environment.GetEnvironmentVariable("GESTOR_ARCHIVOS_WEB_ORIGIN")
+        ?? Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+            "GESTOR_ARCHIVOS_WEB_ORIGIN", null) as string
+        ?? "http://localhost:5173").TrimEnd('/');
 
     [STAThread]
     private static void Main(string[] args)
