@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { ApiError, apiRaw, apiRequest } from '../api/client'
 import Swal from 'sweetalert2'
-import { activateSyncOnThisComputer, isWindowsDesktop } from '../sync/syncActivation'
+import { activateSyncOnThisComputer, CLIENT_INSTALLER_URL, isWindowsDesktop } from '../sync/syncActivation'
 import type {
   FileItem,
   Folder,
@@ -1793,6 +1793,7 @@ export default function FilesPage() {
                 event.currentTarget.closest('details')?.removeAttribute('open')
                 void openSyncManagement()
               }}>Administrar sincronización</button>
+              {CLIENT_INSTALLER_URL && <a href={CLIENT_INSTALLER_URL} target="_blank" rel="noopener noreferrer">Descargar instalador Windows</a>}
             </div>
           </details>}
       </div>
