@@ -7,7 +7,7 @@ namespace GestorArchivos.Sync.Selector.Windows;
 internal static class Program
 {
     private const string AgentArgument = "--agent";
-    private const string AllowedOrigin = "http://localhost:5173";
+    private static readonly string AllowedOrigin = Environment.GetEnvironmentVariable("GESTOR_ARCHIVOS_WEB_ORIGIN")?.TrimEnd('/') ?? "http://localhost:5173";
 
     [STAThread]
     private static void Main(string[] args)
@@ -133,12 +133,14 @@ internal static class Program
                 {
                     response.Headers["Access-Control-Allow-Origin"] = AllowedOrigin;
                     response.Headers["Vary"] = "Origin";
-                    response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+                    response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
                     response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
 
                     if (request.Url?.AbsolutePath != "/selector")
                         response.StatusCode = 404;
                     else if (request.HttpMethod == "OPTIONS")
+                        response.StatusCode = 204;
+                    else if (request.HttpMethod == "GET")
                         response.StatusCode = 204;
                     else if (request.HttpMethod == "POST")
                     {
