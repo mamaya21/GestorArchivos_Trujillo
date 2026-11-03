@@ -147,9 +147,6 @@
                                         Background="#2456E8" Foreground="White" BorderThickness="0"/>
                                 <Button Content="＋  Nueva carpeta" Click="NewFolder_Click"/>
                                 <Button Content="↑  Subir archivos" Click="Upload_Click"/>
-                                <Button Content="Copiar" Click="Copy_Click"/>
-                                <Button Content="Cortar" Click="Cut_Click"/>
-                                <Button Content="Pegar" Click="Paste_Click"/>
                                 <Border BorderBrush="#D8DEEB" BorderThickness="1" CornerRadius="7"
                                         Background="#FAFBFF" Width="220" Height="39" Margin="4,0,0,0">
                                     <Grid>
