@@ -1651,6 +1651,22 @@ export default function FilesPage() {
       if (!result.isConfirmed) return
 
       if (active.length === 0) {
+        if (localState === null) {
+          const install = await Swal.fire({
+            icon: 'info',
+            title: 'Instala Gestor de Archivos para Windows',
+            html: '<p>Para registrar este equipo y sincronizar tus archivos, primero debes instalar e iniciar la aplicación de sincronización.</p><p>Después de instalarla, vuelve a seleccionar <strong>Administrar sincronización</strong>.</p>',
+            showCancelButton: true,
+            confirmButtonText: 'Descargar instalador',
+            cancelButtonText: 'Ahora no',
+            confirmButtonColor: '#2563eb',
+            width: 480,
+          })
+          if (install.isConfirmed) {
+            window.location.assign(CLIENT_INSTALLER_URL)
+          }
+          return
+        }
         const previous = devices.filter(device => !device.active && !device.rootFolderDeleted)
         let reuseDeviceId: string | undefined
         let reuseDeviceName: string | undefined
