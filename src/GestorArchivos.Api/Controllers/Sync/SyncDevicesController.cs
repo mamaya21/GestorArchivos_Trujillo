@@ -219,7 +219,10 @@ public class SyncDevicesController : ControllerBase
             });
         }
 
-        // El nombre físico del equipo es único entre dispositivos activos,\n        // independientemente de la cuenta web que solicita el registro.\n        if (await _dbContext.DispositivosSync.AnyAsync(\n            x => x.Nombre == deviceName && x.Activo,
+        // El nombre físico del equipo es único entre dispositivos activos,
+        // independientemente de la cuenta web que solicita el registro.
+        if (await _dbContext.DispositivosSync.AnyAsync(
+            x => x.Nombre == deviceName && x.Activo,
             cancellationToken))
             return Conflict(new { message = "Este equipo ya tiene una vinculación activa. Desvincúlelo desde su cuenta original antes de registrarlo nuevamente." });
 
