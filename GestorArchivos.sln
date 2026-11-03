@@ -23,6 +23,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GestorArchivos.Sync.Windows
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GestorArchivos.Sync.Selector.Windows", "clients\GestorArchivos.Sync.Selector.Windows\GestorArchivos.Sync.Selector.Windows.csproj", "{956BBA7A-E98E-4A8D-A1CA-E01AF6D18A83}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GestorArchivos.Desktop.Windows", "clients\GestorArchivos.Desktop.Windows\GestorArchivos.Desktop.Windows.csproj", "{4E51CCB0-5D3E-4B5B-A209-7A6AC32E4A97}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -60,8 +62,13 @@ Global
 		{956BBA7A-E98E-4A8D-A1CA-E01AF6D18A83}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{956BBA7A-E98E-4A8D-A1CA-E01AF6D18A83}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{956BBA7A-E98E-4A8D-A1CA-E01AF6D18A83}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4E51CCB0-5D3E-4B5B-A209-7A6AC32E4A97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4E51CCB0-5D3E-4B5B-A209-7A6AC32E4A97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4E51CCB0-5D3E-4B5B-A209-7A6AC32E4A97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4E51CCB0-5D3E-4B5B-A209-7A6AC32E4A97}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{4E51CCB0-5D3E-4B5B-A209-7A6AC32E4A97} = {3B6A18C0-B932-44B6-93E5-2D4D39D542E9}
 		{BC9F3EF8-B121-43A0-9AE0-A9ABB6417F89} = {1A31CADF-3028-43BD-A837-78AA3799A645}
 		{27D30B41-5AF6-4DA5-BE3A-45D5A8C66807} = {1A31CADF-3028-43BD-A837-78AA3799A645}
 		{B7421D55-C8FF-48B0-BCBB-7CD8E1C06D88} = {1A31CADF-3028-43BD-A837-78AA3799A645}

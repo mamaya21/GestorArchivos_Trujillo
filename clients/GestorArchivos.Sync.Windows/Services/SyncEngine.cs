@@ -22,6 +22,8 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     private readonly SyncBaselineService _baselineService;
     private readonly SelectiveSyncService _selectiveSyncService;
     private readonly ISyncApiClient _syncApiClient;
+    private readonly IDeviceRegistrationService _registrations;
+    private Guid? _runningDeviceId;
     private readonly ILocalChangeMonitor _localChangeMonitor;
     private readonly ILocalStateStore _stateStore;
     private readonly SyncRuntimeState _runtimeState;
@@ -29,10 +31,15 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     private readonly SyncOptions _options;
 
     private readonly SemaphoreSlim _syncGate = new(1, 1);
+    private readonly SelectiveWakeSignal _selectiveWakeup = new();
 
     private CancellationToken _stoppingToken;
     private bool _monitorStarted;
     private bool _disposed;
+
+    private static readonly string PausePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "GestorArchivos", "Sync", "paused.flag");
 
     private static readonly string SelectionsPath = Path.Combine(
         Environment.GetFolderPath(
@@ -50,6 +57,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         SyncBaselineService baselineService,
         SelectiveSyncService selectiveSyncService,
         ISyncApiClient syncApiClient,
+        IDeviceRegistrationService registrations,
         ILocalChangeMonitor localChangeMonitor,
         ILocalStateStore stateStore,
         SyncRuntimeState runtimeState,
@@ -64,6 +72,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         _baselineService = baselineService;
         _selectiveSyncService = selectiveSyncService;
         _syncApiClient = syncApiClient;
+        _registrations = registrations;
         _localChangeMonitor = localChangeMonitor;
         _stateStore = stateStore;
         _runtimeState = runtimeState;
@@ -76,12 +85,31 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     {
         _stoppingToken = cancellationToken;
 
+        var initialRegistration = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
+        if (initialRegistration is null || initialRegistration.DeviceId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(initialRegistration.Token))
+            return;
+        _runningDeviceId = initialRegistration.DeviceId;
+
         var savedState = await _stateStore.LoadAsync(
             cancellationToken);
 
-        _runtimeState.LastChangeId = savedState.LastChangeId;
-        _runtimeState.LastSuccessfulSyncUtc = savedState.LastSuccessfulSyncUtc;
-        _runtimeState.IsInitialSyncCompleted = savedState.IsInitialSyncCompleted;
+        // El estado de otro dispositivo (o de una versi贸n sin identidad)
+        // jam谩s se hereda: evita omitir cambios o asumir un baseline ajeno.
+        if (savedState.DeviceId == _runningDeviceId)
+        {
+            _runtimeState.LastChangeId = savedState.LastChangeId;
+            _runtimeState.LastSuccessfulSyncUtc = savedState.LastSuccessfulSyncUtc;
+            _runtimeState.IsInitialSyncCompleted = savedState.IsInitialSyncCompleted;
+        }
+        else
+        {
+            _runtimeState.LastChangeId = 0;
+            _runtimeState.LastSuccessfulSyncUtc = null;
+            _runtimeState.IsInitialSyncCompleted = false;
+        }
+
+        _runtimeState.DeviceId = _runningDeviceId;
 
         _localChangeMonitor.Changed += OnLocalChanged;
 
@@ -91,6 +119,64 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
             {
                 try
                 {
+                    // Nunca continuar un motor iniciado con credenciales revocadas
+                    // ni reutilizar su estado para otro dispositivo.
+                    if (!await IsCurrentRegistrationAsync(cancellationToken))
+                        break;
+
+                    // El selector puede ejecutarse con una versi贸n anterior o sin
+                    // permiso para borrar la marca. Solo se libera el bloqueo cuando
+                    // existe una selecci贸n v谩lida, no vac铆a y posterior a la activaci贸n.
+                    var pendingPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                        "GestorArchivos", "Sync", "selection-pending.flag");
+                    if (File.Exists(pendingPath))
+                    {
+                        var selectionConfirmed = false;
+                        try
+                        {
+                            if (File.Exists(SelectionsPath) &&
+                                File.GetLastWriteTimeUtc(SelectionsPath) > File.GetLastWriteTimeUtc(pendingPath))
+                            {
+                                using var selectionDoc = JsonDocument.Parse(
+                                    await File.ReadAllTextAsync(SelectionsPath, cancellationToken));
+                                selectionConfirmed = selectionDoc.RootElement.ValueKind == JsonValueKind.Array &&
+                                    selectionDoc.RootElement.GetArrayLength() > 0;
+                            }
+                        }
+                        catch (IOException) { }
+                        catch (JsonException) { }
+                        catch (UnauthorizedAccessException) { }
+
+                        if (!selectionConfirmed)
+                        {
+                            if (_monitorStarted)
+                            {
+                                _localChangeMonitor.Stop();
+                                _monitorStarted = false;
+                            }
+                            await DelayAsync(cancellationToken);
+                            continue;
+                        }
+
+                        // No se requiere borrar la marca para reanudar: el selector
+                        // puede no tener permisos sobre ProgramData.
+                    }
+
+                    // Pausar nunca altera selecciones, asociaciones ni archivos.
+                    if (File.Exists(PausePath))
+                    {
+                        if (_monitorStarted)
+                        {
+                            _localChangeMonitor.Stop();
+                            _monitorStarted = false;
+                        }
+
+                        _runtimeState.IsOnline = false;
+                        await DelayAsync(cancellationToken);
+                        continue;
+                    }
+
                     if (HasConfiguredSelections() && _monitorStarted)
                     {
                         _localChangeMonitor.Stop();
@@ -110,6 +196,12 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
                     try
                     {
+                        if (File.Exists(PausePath))
+                            continue;
+
+                        if (!await IsCurrentRegistrationAsync(cancellationToken))
+                            return;
+
                         if (HasConfiguredSelections() && _monitorStarted)
                         {
                             _localChangeMonitor.Stop();
@@ -135,6 +227,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
                         if (HasConfiguredSelections())
                         {
+                            _selectiveWakeup.Configure(SelectionsPath);
                             await _selectiveSyncService.ExecuteAsync(
                                 cancellationToken);
                         }
@@ -189,7 +282,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                 catch (Exception ex)
                 {
                     _runtimeState.IsOnline = false;
-                    _log.Error(ex, "sincronizaci髇");
+                    _log.Error(ex, "sincronizaci贸n");
                 }
 
                 await DelayAsync(cancellationToken);
@@ -209,6 +302,13 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
         }
     }
 
+    private async Task<bool> IsCurrentRegistrationAsync(CancellationToken cancellationToken)
+    {
+        var registered = await _registrations.GetRegisteredDeviceAsync(cancellationToken);
+        return registered is not null && registered.DeviceId == _runningDeviceId &&
+               !string.IsNullOrWhiteSpace(registered.Token);
+    }
+
     private static bool HasConfiguredSelections()
     {
         if (!File.Exists(SelectionsPath))
@@ -220,7 +320,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
                 File.ReadAllText(SelectionsPath));
 
             // La existencia del archivo mantiene activo el modo selectivo,
-            // incluso con un arreglo vac韔. Nunca se reactiva autom醫icamente
+            // incluso con un arreglo vac铆o. Nunca se reactiva autom谩ticamente
             // el modo tradicional.
             return true;
         }
@@ -256,7 +356,8 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
 
             try
             {
-                if (!_runtimeState.IsOnline || HasConfiguredSelections())
+                if (!_runtimeState.IsOnline || HasConfiguredSelections() || File.Exists(PausePath) ||
+                    !await IsCurrentRegistrationAsync(_stoppingToken))
                     return;
 
                 await _changePushService.PushAsync(
@@ -293,9 +394,10 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
     {
         try
         {
-            await Task.Delay(
-                TimeSpan.FromSeconds(_options.PollIntervalSeconds),
-                cancellationToken);
+            if (HasConfiguredSelections() && !File.Exists(PausePath))
+                await _selectiveWakeup.WaitAsync(TimeSpan.FromSeconds(_options.PollIntervalSeconds), cancellationToken);
+            else
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), cancellationToken);
         }
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
@@ -309,6 +411,7 @@ public sealed class SyncEngine : ISyncEngine, IDisposable
             return;
 
         _disposed = true;
+        _selectiveWakeup.Dispose();
         _runtimeState.IsOnline = false;
 
         if (_monitorStarted)

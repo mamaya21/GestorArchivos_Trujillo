@@ -10,7 +10,7 @@ public sealed class SyncApiException : Exception
     public SyncApiException(
         HttpStatusCode statusCode,
         string? responseBody)
-        : base($"Sync API respondió {(int)statusCode} ({statusCode}).")
+        : base($"Sync API respondiÃ³ {(int)statusCode} ({statusCode}). Detalle: {responseBody?.Substring(0, Math.Min(responseBody.Length, 1024))}")
     {
         StatusCode = statusCode;
         ResponseBody = responseBody;

@@ -46,7 +46,7 @@ public class UploadsController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(storageOptions.Value.RootPath))
             throw new InvalidOperationException(
-                "Storage:RootPath no est· configurado.");
+                "Storage:RootPath no est√° configurado.");
 
         _rootPath = Path.GetFullPath(
             storageOptions.Value.RootPath);
@@ -73,7 +73,7 @@ public class UploadsController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "TamaÒo de archivo inv·lido."
+                message = "Tama√±o de archivo inv√°lido."
             });
         }
 
@@ -105,7 +105,7 @@ public class UploadsController : ControllerBase
         if (request.ReplaceFileId.HasValue)
         {
             if (!request.ExpectedVersion.HasValue || request.ExpectedVersion.Value < 1)
-                return BadRequest(new { message = "Indica la versiÛn esperada." });
+                return BadRequest(new { message = "Indica la versi√≥n esperada." });
 
             replacement = await _dbContext.Archivos.AsNoTracking()
                 .FirstOrDefaultAsync(x => x.Id == request.ReplaceFileId.Value &&
@@ -113,7 +113,7 @@ public class UploadsController : ControllerBase
                     cancellationToken);
             if (replacement is null) return NotFound();
             if (replacement.Version != request.ExpectedVersion.Value)
-                return Conflict(new { message = "El archivo cambiÛ. Actualiza la carpeta antes de reemplazarlo." });
+                return Conflict(new { message = "El archivo cambi√≥. Actualiza la carpeta antes de reemplazarlo." });
             if (!string.Equals(replacement.Nombre.Normalize(System.Text.NormalizationForm.FormC), fileName.Normalize(System.Text.NormalizationForm.FormC), StringComparison.OrdinalIgnoreCase))
                 return Conflict(new { message = "El nombre no coincide con el archivo existente." });
             if (!await _permissionService.HasPermissionAsync(GetCurrentUserId(), request.FolderId,
@@ -214,7 +214,7 @@ public class UploadsController : ControllerBase
                     StatusCodes.Status410Gone,
                     new
                     {
-                        message = "La sesiÛn de carga ha expirado."
+                        message = "La sesi√≥n de carga ha expirado."
                     });
             }
 
@@ -223,7 +223,7 @@ public class UploadsController : ControllerBase
             {
                 return BadRequest(new
                 {
-                    message = "Õndice de fragmento inv·lido."
+                    message = "√çndice de fragmento inv√°lido."
                 });
             }
 
@@ -236,7 +236,7 @@ public class UploadsController : ControllerBase
             {
                 return BadRequest(new
                 {
-                    message = "TamaÒo de fragmento inv·lido.",
+                    message = "Tama√±o de fragmento inv√°lido.",
                     expectedBytes = expectedLength,
                     receivedBytes = Request.ContentLength.Value
                 });
@@ -257,13 +257,29 @@ public class UploadsController : ControllerBase
                 var existingLength =
                     new FileInfo(chunkPath).Length;
 
-                if (existingLength == expectedLength)
-                    return NoContent();
+                if (existingLength != expectedLength)
+                    return Conflict(new
+                    {
+                        message = "Existe un fragmento inv√°lido con ese √≠ndice."
+                    });
 
-                return Conflict(new
-                {
-                    message = "Existe un fragmento inv·lido con ese Ìndice."
-                });
+                // Un reintento debe contener exactamente los mismos bytes.
+                // Igual tama√±o no implica igual contenido.
+                await using var existingStream = System.IO.File.OpenRead(chunkPath);
+                using var existingHash = SHA256.Create();
+                var storedHash = await existingHash.ComputeHashAsync(
+                    existingStream, cancellationToken);
+                using var incomingHash = SHA256.Create();
+                var receivedHash = await incomingHash.ComputeHashAsync(
+                    Request.Body, cancellationToken);
+
+                if (!CryptographicOperations.FixedTimeEquals(storedHash, receivedHash))
+                    return Conflict(new
+                    {
+                        message = "El fragmento reenviado tiene contenido diferente."
+                    });
+
+                return NoContent();
             }
 
             try
@@ -296,7 +312,7 @@ public class UploadsController : ControllerBase
                         {
                             return BadRequest(new
                             {
-                                message = "El fragmento supera el tamaÒo esperado."
+                                message = "El fragmento supera el tama√±o esperado."
                             });
                         }
 
@@ -310,7 +326,7 @@ public class UploadsController : ControllerBase
                 {
                     return BadRequest(new
                     {
-                        message = "El fragmento est· incompleto.",
+                        message = "El fragmento est√° incompleto.",
                         expectedBytes = expectedLength,
                         receivedBytes = bytesWritten
                     });
@@ -356,6 +372,13 @@ public class UploadsController : ControllerBase
             if (ownershipResult is not null)
                 return ownershipResult;
 
+            if (!await _permissionService.HasPermissionAsync(
+                    GetCurrentUserId(),
+                    metadata.FolderId,
+                    PermisoCarpeta.Crear,
+                    cancellationToken))
+                return Forbid();
+
             if (IsExpired(metadata))
             {
                 DeleteUploadDirectory(uploadId);
@@ -364,7 +387,7 @@ public class UploadsController : ControllerBase
                     StatusCodes.Status410Gone,
                     new
                     {
-                        message = "La sesiÛn de carga ha expirado."
+                        message = "La sesi√≥n de carga ha expirado."
                     });
             }
 
@@ -441,7 +464,7 @@ public class UploadsController : ControllerBase
                     StatusCodes.Status410Gone,
                     new
                     {
-                        message = "La sesiÛn de carga ha expirado."
+                        message = "La sesi√≥n de carga ha expirado."
                     });
             }
 
@@ -456,7 +479,7 @@ public class UploadsController : ControllerBase
             {
                 return Conflict(new
                 {
-                    message = "La carpeta de destino ya no est· disponible."
+                    message = "La carpeta de destino ya no est√° disponible."
                 });
             }
 
@@ -475,7 +498,7 @@ public class UploadsController : ControllerBase
                 {
                     return BadRequest(new
                     {
-                        message = "La carga est· incompleta.",
+                        message = "La carga est√° incompleta.",
                         missingChunk = index
                     });
                 }
@@ -492,7 +515,7 @@ public class UploadsController : ControllerBase
                 {
                     return BadRequest(new
                     {
-                        message = "Se encontrÛ un fragmento con tamaÒo inv·lido.",
+                        message = "Se encontr√≥ un fragmento con tama√±o inv√°lido.",
                         chunkIndex = index,
                         expectedBytes = expectedLength,
                         receivedBytes = actualLength
@@ -596,7 +619,7 @@ public class UploadsController : ControllerBase
             if (assembledBytes != metadata.FileSize)
             {
                 throw new InvalidDataException(
-                    "El tamaÒo ensamblado no coincide con el esperado.");
+                    "El tama√±o ensamblado no coincide con el esperado.");
             }
 
             var hash = Convert.ToHexString(
@@ -615,7 +638,7 @@ public class UploadsController : ControllerBase
                 {
                     System.IO.File.Delete(finalPath);
                     finalPath = null;
-                    return Conflict(new { message = "El archivo fue modificado o eliminado. No se reemplazÛ." });
+                    return Conflict(new { message = "El archivo fue modificado o eliminado. No se reemplaz√≥." });
                 }
 
                 var previousPath = target.NombreFisico;
@@ -647,7 +670,7 @@ public class UploadsController : ControllerBase
                     _dbContext.ChangeTracker.Clear();
                     System.IO.File.Delete(finalPath);
                     finalPath = null;
-                    return Conflict(new { message = "Otra actualizaciÛn ganÛ la carrera. No se reemplazÛ." });
+                    return Conflict(new { message = "Otra actualizaci√≥n gan√≥ la carrera. No se reemplaz√≥." });
                 }
 
                 DeleteUploadDirectory(uploadId);
@@ -896,7 +919,7 @@ public class UploadsController : ControllerBase
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "Ruta de almacenamiento inv·lida.");
+                "Ruta de almacenamiento inv√°lida.");
         }
 
         return fullPath;

@@ -18,7 +18,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        bool allowInsecureDevelopmentCookies = false)
     {
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(
@@ -26,7 +27,7 @@ public static class DependencyInjection
 
         services.AddIdentityCore<ApplicationUser>(options =>
         {
-            options.Password.RequiredLength = 12;
+            options.Password.RequiredLength = 6;
             options.Password.RequireDigit = true;
             options.Password.RequireLowercase = true;
             options.Password.RequireUppercase = true;
@@ -53,9 +54,12 @@ public static class DependencyInjection
         services.AddAuthentication(IdentityConstants.ApplicationScheme)
             .AddCookie(IdentityConstants.ApplicationScheme, options =>
             {
+				options.Cookie.Path = "/";
                 options.Cookie.Name = "GestorArchivos.Auth";
                 options.Cookie.HttpOnly = true;
-                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SecurePolicy = allowInsecureDevelopmentCookies
+                    ? CookieSecurePolicy.SameAsRequest
+                    : CookieSecurePolicy.Always;
                 options.Cookie.SameSite = SameSiteMode.Strict;
 
                 options.ExpireTimeSpan = TimeSpan.FromHours(8);

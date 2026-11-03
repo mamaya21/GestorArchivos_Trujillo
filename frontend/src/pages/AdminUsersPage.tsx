@@ -119,9 +119,9 @@ export default function AdminUsersPage() {
           return false
         }
 
-        if (password.length < 12) {
+        if (password.length < 6) {
           Swal.showValidationMessage(
-            'La contraseña debe tener al menos 12 caracteres.',
+            'La contraseña debe tener al menos 6 caracteres.',
           )
           return false
         }
@@ -276,8 +276,8 @@ export default function AdminUsersPage() {
       cancelButtonText: 'Cancelar',
       inputValidator: (value) => {
         if (!value) return 'Ingresa la nueva contraseña.'
-        if (value.length < 12) {
-          return 'La contraseña debe tener al menos 12 caracteres.'
+        if (value.length < 6) {
+          return 'La contraseña debe tener al menos 6 caracteres.'
         }
 
         return undefined

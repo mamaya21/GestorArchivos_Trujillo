@@ -51,19 +51,19 @@ public sealed class SyncAtomicFolderController : ControllerBase
             request.Name.EndsWith(' ') ||
             request.Name.EndsWith('.') ||
             request.Name is "." or "..")
-            return BadRequest(new { message = "Nombre de carpeta inv·lido." });
+            return BadRequest(new { message = "Nombre de carpeta inv√°lido." });
 
         var name = request.Name.Normalize(NormalizationForm.FormC);
 
         if (name.Length > 255 ||
             name.IndexOfAny(['<', '>', ':', '"', '/', '\\', '|', '?', '*']) >= 0 ||
             name.Any(char.IsControl))
-            return BadRequest(new { message = "Nombre de carpeta inv·lido." });
+            return BadRequest(new { message = "Nombre de carpeta inv√°lido." });
 
         var localPath = request.LocalPath.Trim();
 
         if (localPath.Length > 2048)
-            return BadRequest(new { message = "La ruta local supera el lÌmite permitido." });
+            return BadRequest(new { message = "La ruta local supera el l√≠mite permitido." });
 
         var device = await _db.DispositivosSync
             .AsNoTracking()
@@ -96,7 +96,7 @@ public sealed class SyncAtomicFolderController : ControllerBase
                 cancellationToken);
 
         // Idempotencia: una ruta ya registrada debe devolver
-        // su asociaciÛn existente, nunca crear otra carpeta.
+        // su asociaci√≥n existente, nunca crear otra carpeta.
         var existingItem = await _db.ElementosSync
             .AsNoTracking()
             .FirstOrDefaultAsync(
@@ -106,10 +106,101 @@ public sealed class SyncAtomicFolderController : ControllerBase
 
         if (existingItem is not null)
         {
+            // Una ruta retirada y posteriormente seleccionada conserva su
+            // registro hist√≥rico inactivo. Solo reutilizarlo si la carpeta
+            // anterior est√° confirmada en papelera; nunca adoptar otra carpeta.
+            if (!existingItem.Activo &&
+                existingItem.Tipo == TipoElementoSync.Carpeta &&
+                existingItem.CarpetaRemotaId.HasValue)
+            {
+                var previousTrashed = await _db.Carpetas
+                    .AsNoTracking()
+                    .AnyAsync(x => x.Id == existingItem.CarpetaRemotaId.Value &&
+                                   x.EnPapelera, cancellationToken);
+                if (!previousTrashed)
+                    return Conflict(new { message = "La asociaci√≥n anterior no est√° confirmada en la papelera." });
+
+                // Reutilizar el registro evita violar la unicidad de
+                // (DispositivoId, RutaLocal) y permite una nueva carpeta.
+                var tracked = await _db.ElementosSync
+                    .SingleAsync(x => x.Id == existingItem.Id, cancellationToken);
+                var occupied = await _db.Carpetas.AsNoTracking().AnyAsync(
+                    x => x.CarpetaPadreId == request.ParentFolderId &&
+                         x.Nombre == name && !x.EnPapelera, cancellationToken);
+                if (occupied)
+                    return Conflict(new { message = "Ya existe una carpeta activa con ese nombre." });
+
+                var replacement = new Carpeta
+                {
+                    Nombre = name,
+                    CarpetaPadreId = request.ParentFolderId,
+                    CreadoPorUsuarioId = userId
+                };
+                _db.Carpetas.Add(replacement);
+                tracked.CarpetaRemotaId = replacement.Id;
+                tracked.Activo = true;
+                await _changes.RegisterAsync(request.ParentFolderId, null,
+                    replacement.Id, "FOLDER_CREATED", sourceDeviceId: deviceId,
+                    cancellationToken: cancellationToken);
+                await _db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return Ok(new
+                {
+                    syncItemId = tracked.Id,
+                    remoteFolderId = replacement.Id,
+                    replacement.Nombre,
+                    replacement.CarpetaPadreId,
+                    alreadyExisted = false
+                });
+            }
+
+            if (existingItem.Activo &&
+                existingItem.Tipo == TipoElementoSync.Carpeta &&
+                existingItem.CarpetaRemotaId.HasValue)
+            {
+                var oldFolder = await _db.Carpetas.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == existingItem.CarpetaRemotaId.Value,
+                        cancellationToken);
+                // Las subcarpetas de una selecci√≥n enviada a papelera
+                // mantienen su asociaci√≥n activa. Solo reactivar si el
+                // objeto antiguo est√° confirmado en papelera.
+                if (oldFolder is not null && oldFolder.EnPapelera)
+                {
+                    var occupied = await _db.Carpetas.AsNoTracking().AnyAsync(
+                        x => x.CarpetaPadreId == request.ParentFolderId &&
+                             x.Nombre == name && !x.EnPapelera, cancellationToken);
+                    if (occupied)
+                        return Conflict(new { message = "Ya existe una carpeta activa con ese nombre." });
+                    var tracked = await _db.ElementosSync.SingleAsync(
+                        x => x.Id == existingItem.Id, cancellationToken);
+                    var replacement = new Carpeta
+                    {
+                        Nombre = name,
+                        CarpetaPadreId = request.ParentFolderId,
+                        CreadoPorUsuarioId = userId
+                    };
+                    _db.Carpetas.Add(replacement);
+                    tracked.CarpetaRemotaId = replacement.Id;
+                    await _changes.RegisterAsync(request.ParentFolderId, null,
+                        replacement.Id, "FOLDER_CREATED", sourceDeviceId: deviceId,
+                        cancellationToken: cancellationToken);
+                    await _db.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    return Ok(new
+                    {
+                        syncItemId = tracked.Id,
+                        remoteFolderId = replacement.Id,
+                        replacement.Nombre,
+                        replacement.CarpetaPadreId,
+                        alreadyExisted = false
+                    });
+                }
+            }
+
             if (!existingItem.Activo ||
                 existingItem.Tipo != TipoElementoSync.Carpeta ||
                 !existingItem.CarpetaRemotaId.HasValue)
-                return Conflict(new { message = "La ruta ya tiene otra asociaciÛn." });
+                return Conflict(new { message = "La ruta ya tiene otra asociaci√≥n." });
 
             var existingFolder = await _db.Carpetas
                 .AsNoTracking()
@@ -121,7 +212,7 @@ public sealed class SyncAtomicFolderController : ControllerBase
             if (existingFolder is null ||
                 existingFolder.CarpetaPadreId != request.ParentFolderId ||
                 existingFolder.Nombre != name)
-                return Conflict(new { message = "La asociaciÛn existente no coincide." });
+                return Conflict(new { message = "La asociaci√≥n existente no coincide." });
 
             return Ok(new
             {
@@ -133,8 +224,8 @@ public sealed class SyncAtomicFolderController : ControllerBase
             });
         }
 
-        // Una carpeta remota existente no se adopta autom·ticamente:
-        // podrÌa pertenecer a otro usuario o a otra selecciÛn.
+        // Una carpeta remota existente no se adopta autom√°ticamente:
+        // podr√≠a pertenecer a otro usuario o a otra selecci√≥n.
         var duplicateFolder = await _db.Carpetas
             .AsNoTracking()
             .AnyAsync(
@@ -146,7 +237,7 @@ public sealed class SyncAtomicFolderController : ControllerBase
         if (duplicateFolder)
             return Conflict(new
             {
-                message = "Ya existe una carpeta remota con ese nombre. No se crear· otra."
+                message = "Ya existe una carpeta remota con ese nombre. No se crear√° otra."
             });
 
         var folder = new Carpeta

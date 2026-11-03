@@ -20,13 +20,18 @@ public sealed class ActivationService : IActivationService
         ArgumentNullException.ThrowIfNull(device);
 
         if (device.DeviceId == Guid.Empty)
-            throw new ArgumentException("DeviceId inv�lido.", nameof(device));
+            throw new ArgumentException("DeviceId inválido.", nameof(device));
 
         if (device.RootFolderId == Guid.Empty)
-            throw new ArgumentException("RootFolderId inv�lido.", nameof(device));
+            throw new ArgumentException("RootFolderId inválido.", nameof(device));
 
         if (string.IsNullOrWhiteSpace(device.Token))
-            throw new ArgumentException("Token inv�lido.", nameof(device));
+            throw new ArgumentException("Token inválido.", nameof(device));
+
+        var current = await _deviceRegistrationService.GetRegisteredDeviceAsync(cancellationToken);
+        if (current is not null && current.DeviceId != Guid.Empty &&
+            current.DeviceId != device.DeviceId && !string.IsNullOrWhiteSpace(current.Token))
+            throw new InvalidOperationException("Este equipo ya está vinculado. Desvincúlelo antes de activar otra cuenta.");
 
         await _deviceRegistrationService.SaveRegistrationAsync(
             device,

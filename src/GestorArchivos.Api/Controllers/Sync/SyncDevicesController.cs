@@ -22,6 +22,138 @@ public class SyncDevicesController : ControllerBase
         _dbContext = dbContext;
     }
 
+    // Estado de los dispositivos del usuario. No exponer credenciales ni tokens.
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+
+        var devices = await _dbContext.DispositivosSync
+            .AsNoTracking()
+            .Where(x => x.UsuarioId == userId)
+            .OrderByDescending(x => x.FechaRegistro)
+            .Select(x => new
+            {
+                deviceId = x.Id,
+                deviceName = x.Nombre,
+                rootFolderId = x.CarpetaRaizId,
+                rootFolderName = x.CarpetaRaiz.Nombre,
+                rootFolderDeleted = x.CarpetaRaiz.EnPapelera,
+                active = x.Activo,
+                lastConnectionUtc = x.UltimaConexionUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(devices);
+    }
+
+    [HttpPost("{deviceId:guid}/unlink")]
+    public async Task<IActionResult> Unlink(Guid deviceId, CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        var device = await _dbContext.DispositivosSync
+            .FirstOrDefaultAsync(x => x.Id == deviceId && x.UsuarioId == userId, cancellationToken);
+
+        if (device is null)
+            return NotFound();
+
+        device.Activo = false;
+        var credentials = await _dbContext.CredencialesDispositivosSync
+            .Where(x => x.DispositivoId == deviceId && !x.Revocada)
+            .ToListAsync(cancellationToken);
+
+        foreach (var credential in credentials)
+        {
+            credential.Revocada = true;
+            credential.FechaRevocacionUtc = DateTime.UtcNow;
+        }
+
+        // La carpeta raíz y los elementos remotos se conservan intactos.
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    // Solo tras desvincular: retirar la raíz remota de la vista activa sin tocar Windows.
+    // Se conserva en Papelera para recuperación y se impide reusar esta vinculación.
+    [HttpPost("{deviceId:guid}/discard-root")]
+    public async Task<IActionResult> DiscardRoot(Guid deviceId, CancellationToken cancellationToken)
+    {
+        var userId = CurrentUserId();
+        var device = await _dbContext.DispositivosSync
+            .Include(x => x.CarpetaRaiz)
+            .FirstOrDefaultAsync(x => x.Id == deviceId && x.UsuarioId == userId, cancellationToken);
+        if (device is null) return NotFound();
+        if (device.Activo)
+            return Conflict(new { message = "Primero debe desvincular el equipo." });
+        if (device.CarpetaRaiz.EnPapelera) return NoContent();
+
+        if (await _dbContext.DispositivosSync.AnyAsync(x =>
+            x.Id != deviceId && x.CarpetaRaizId == device.CarpetaRaizId && x.Activo, cancellationToken))
+            return Conflict(new { message = "La carpeta raíz pertenece a otro dispositivo activo." });
+
+        var ids = new HashSet<Guid> { device.CarpetaRaizId };
+        var pending = new List<Guid> { device.CarpetaRaizId };
+        while (pending.Count > 0)
+        {
+            var children = await _dbContext.Carpetas.AsNoTracking()
+                .Where(x => x.CarpetaPadreId.HasValue && pending.Contains(x.CarpetaPadreId.Value) && !x.EnPapelera)
+                .Select(x => x.Id).ToListAsync(cancellationToken);
+            pending = children.Where(ids.Add).ToList();
+        }
+
+        var folders = await _dbContext.Carpetas.Where(x => ids.Contains(x.Id) && !x.EnPapelera)
+            .ToListAsync(cancellationToken);
+        var files = await _dbContext.Archivos
+            .Where(x => ids.Contains(x.CarpetaId) && x.Estado == GestorArchivos.Domain.Enums.EstadoArchivo.Activo)
+            .ToListAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        var batch = Guid.NewGuid();
+        foreach (var folder in folders)
+        {
+            folder.EnPapelera = true;
+            folder.FechaEliminacion = now;
+            folder.FechaModificacion = now;
+            folder.EliminacionLoteId = batch;
+        }
+        foreach (var file in files)
+        {
+            file.Estado = GestorArchivos.Domain.Enums.EstadoArchivo.EnPapelera;
+            file.FechaEliminacion = now;
+            file.FechaModificacion = now;
+            file.EliminacionLoteId = batch;
+            file.Version++;
+        }
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    [HttpGet("{deviceId:guid}/registration-state")]
+    public async Task<IActionResult> RegistrationState(Guid deviceId, CancellationToken cancellationToken)
+    {
+        var active = await _dbContext.DispositivosSync.AsNoTracking()
+            .AnyAsync(x => x.Id == deviceId && x.Activo, cancellationToken);
+        return Ok(new { active });
+    }
+
+    [HttpGet("host-registration-state")]
+    public async Task<IActionResult> HostRegistrationState([FromQuery] string hostName, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(hostName) || hostName.Length > 255)
+            return BadRequest(new { message = "Nombre de equipo inválido." });
+
+        var userId = CurrentUserId();
+        var registrations = await _dbContext.DispositivosSync.AsNoTracking()
+            .Where(x => x.Nombre == hostName.Trim() && x.Activo)
+            .Select(x => new { x.Id, x.UsuarioId })
+            .ToListAsync(cancellationToken);
+
+        return Ok(new
+        {
+            active = registrations.Count > 0,
+            linkedToCurrentAccount = registrations.Any(x => x.UsuarioId == userId)
+        });
+    }
+
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         RegisterSyncDeviceRequest request,
@@ -29,20 +161,89 @@ public class SyncDevicesController : ControllerBase
     {
         var userId = CurrentUserId();
 
+        if (request is null ||
+            string.IsNullOrWhiteSpace(request.Name) ||
+            string.IsNullOrWhiteSpace(request.OperatingSystem))
+        {
+            return BadRequest(new
+            {
+                message = "El nombre y el sistema operativo del dispositivo son obligatorios."
+            });
+        }
+
         var deviceName = request.Name.Trim();
+        var operatingSystem = request.OperatingSystem.Trim();
 
-        if (string.IsNullOrWhiteSpace(deviceName))
-            return BadRequest(new { message = "El nombre del dispositivo es obligatorio." });
+        if (deviceName.Length > 255 || operatingSystem.Length > 255)
+        {
+            return BadRequest(new
+            {
+                message = "El nombre y el sistema operativo no pueden superar 255 caracteres."
+            });
+        }
 
-        var duplicate = await _dbContext.DispositivosSync
-            .AnyAsync(x =>
-                x.UsuarioId == userId &&
-                x.Nombre == deviceName &&
-                x.Activo,
-                cancellationToken);
+        // Solo revincular cuando el usuario eligió expresamente el dispositivo anterior.
+        var existing = request.ReuseDeviceId is Guid reuseId
+            ? await _dbContext.DispositivosSync.FirstOrDefaultAsync(
+                x => x.Id == reuseId && x.UsuarioId == userId, cancellationToken)
+            : null;
 
-        if (duplicate)
-            return Conflict(new { message = "Ya existe un dispositivo activo con ese nombre." });
+        if (request.ReuseDeviceId.HasValue && existing is null)
+            return NotFound(new { message = "No se encontró el dispositivo anterior en esta cuenta." });
+
+        if (existing?.Activo == true && !request.RecoverLocalRegistration)
+            return Conflict(new { message = "El dispositivo está activo. Confirme expresamente la recuperación del registro local." });
+
+        if (existing is not null && await _dbContext.Carpetas.AnyAsync(x => x.Id == existing.CarpetaRaizId && x.EnPapelera, cancellationToken))
+            return Conflict(new { message = "La raíz anterior fue retirada. Registre una sincronización nueva." });
+
+        if (existing is not null)
+        {
+            if (!string.Equals(existing.Nombre, deviceName, StringComparison.Ordinal))
+                return BadRequest(new { message = "El nombre no coincide con el dispositivo seleccionado." });
+
+            // Recuperar la misma raíz sin restaurar credenciales antiguas.
+            var oldCredentials = await _dbContext.CredencialesDispositivosSync
+                .Where(x => x.DispositivoId == existing.Id && !x.Revocada)
+                .ToListAsync(cancellationToken);
+
+            foreach (var old in oldCredentials)
+            {
+                old.Revocada = true;
+                old.FechaRevocacionUtc = DateTime.UtcNow;
+            }
+
+            var renewedToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            existing.Activo = true;
+            existing.SistemaOperativo = operatingSystem;
+            _dbContext.CredencialesDispositivosSync.Add(new CredencialDispositivoSync
+            {
+                DispositivoId = existing.Id,
+                TokenHash = ComputeSha256(renewedToken)
+            });
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            var existingRootName = await _dbContext.Carpetas
+                .Where(x => x.Id == existing.CarpetaRaizId)
+                .Select(x => x.Nombre)
+                .SingleAsync(cancellationToken);
+
+            return Ok(new
+            {
+                deviceId = existing.Id,
+                deviceName = existing.Nombre,
+                rootFolderId = existing.CarpetaRaizId,
+                rootFolderName = existingRootName,
+                token = renewedToken
+            });
+        }
+
+        // El nombre físico del equipo es único entre dispositivos activos,
+        // independientemente de la cuenta web que solicita el registro.
+        if (await _dbContext.DispositivosSync.AnyAsync(
+            x => x.Nombre == deviceName && x.Activo,
+            cancellationToken))
+            return Conflict(new { message = "Este equipo ya tiene una vinculación activa. Desvincúlelo desde su cuenta original antes de registrarlo nuevamente." });
 
         var folderName = await GetAvailableRootFolderNameAsync(
             deviceName,
@@ -59,7 +260,7 @@ public class SyncDevicesController : ControllerBase
         {
             UsuarioId = userId,
             Nombre = deviceName,
-            SistemaOperativo = request.OperatingSystem.Trim(),
+            SistemaOperativo = operatingSystem,
             CarpetaRaiz = rootFolder
         };
 
@@ -138,4 +339,6 @@ public class SyncDevicesController : ControllerBase
 
 public sealed record RegisterSyncDeviceRequest(
     string Name,
-    string OperatingSystem);
+    string OperatingSystem,
+    Guid? ReuseDeviceId = null,
+    bool RecoverLocalRegistration = false);

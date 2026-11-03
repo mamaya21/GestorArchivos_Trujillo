@@ -15,6 +15,8 @@ public interface ISyncApiClient
     Task<IReadOnlyList<SyncItem>> GetItemsAsync(
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<SyncItem>> GetInactiveItemsAsync(CancellationToken cancellationToken = default);
+
     Task<SyncSnapshot> GetSnapshotAsync(
         CancellationToken cancellationToken = default);
 
@@ -30,11 +32,25 @@ public interface ISyncApiClient
         string localPath,
         CancellationToken cancellationToken = default);
 
+    Task DetachTrashedItemAsync(Guid syncItemId, CancellationToken cancellationToken = default);
+    Task<bool> IsItemTrashedAsync(Guid syncItemId, CancellationToken cancellationToken = default);
+
+    Task TrashSelectedFileAsync(Guid fileId, CancellationToken cancellationToken = default);
+    Task TrashSelectedFolderAsync(Guid folderId, CancellationToken cancellationToken = default);
+
     Task MoveRemoteFileToTrashAsync(
         Guid fileId,
         long expectedVersion,
         string expectedHash,
         CancellationToken cancellationToken = default);
+
+    Task RenameRemoteFileAsync(Guid fileId, string name, CancellationToken cancellationToken = default);
+
+    Task MoveRemoteFileAsync(Guid fileId, Guid destinationFolderId, CancellationToken cancellationToken = default);
+
+    Task RenameRemoteFolderAsync(Guid folderId, string name, CancellationToken cancellationToken = default);
+
+    Task MoveRemoteFolderAsync(Guid folderId, Guid destinationFolderId, CancellationToken cancellationToken = default);
 
     Task DeleteItemAsync(
         Guid syncItemId,

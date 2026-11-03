@@ -88,7 +88,7 @@ public class SyncReadController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "La versiÛn esperada no es v·lida."
+                message = "La versi√≥n esperada no es v√°lida."
             });
         }
 
@@ -98,7 +98,7 @@ public class SyncReadController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "El SHA-256 esperado no es v·lido."
+                message = "El SHA-256 esperado no es v√°lido."
             });
         }
 
@@ -134,7 +134,7 @@ public class SyncReadController : ControllerBase
                 StatusCodes.Status412PreconditionFailed,
                 new
                 {
-                    message = "La versiÛn remota cambiÛ antes de la descarga.",
+                    message = "La versi√≥n remota cambi√≥ antes de la descarga.",
                     currentVersion = file.Version,
                     currentHash = file.HashSha256
                 });
@@ -154,7 +154,7 @@ public class SyncReadController : ControllerBase
                 StatusCodes.Status409Conflict,
                 new
                 {
-                    message = "El archivo fÌsico ya no est· disponible."
+                    message = "El archivo f√≠sico ya no est√° disponible."
                 });
         }
         catch (DirectoryNotFoundException)
@@ -163,7 +163,7 @@ public class SyncReadController : ControllerBase
                 StatusCodes.Status409Conflict,
                 new
                 {
-                    message = "El archivo fÌsico ya no est· disponible."
+                    message = "El archivo f√≠sico ya no est√° disponible."
                 });
         }
 
@@ -284,10 +284,24 @@ public class SyncReadController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
+        var readableFolderIds = new HashSet<Guid>();
+
+        foreach (var child in folders)
+        {
+            if (await _permissionService.HasPermissionAsync(
+                    userId,
+                    child.Id,
+                    PermisoCarpeta.Leer,
+                    cancellationToken))
+            {
+                readableFolderIds.Add(child.Id);
+            }
+        }
+
         return Ok(new
         {
             folderId,
-            folders,
+            folders = folders.Where(x => readableFolderIds.Contains(x.Id)),
             files
         });
     }

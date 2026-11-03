@@ -22,6 +22,22 @@ namespace GestorArchivos.Infrastructure.Identity.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("GestorArchivos.Domain.Entities.ArchivoVersion", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedOnAdd().HasColumnType("uniqueidentifier");
+                    b.Property<Guid>("ArchivoId").HasColumnType("uniqueidentifier");
+                    b.Property<DateTime>("FechaUtc").HasColumnType("datetime2");
+                    b.Property<string>("HashSha256").IsRequired().HasMaxLength(64).HasColumnType("nvarchar(64)");
+                    b.Property<string>("NombreFisico").IsRequired().HasMaxLength(255).HasColumnType("nvarchar(255)");
+                    b.Property<long>("Numero").HasColumnType("bigint");
+                    b.Property<long>("TamanoBytes").HasColumnType("bigint");
+                    b.Property<string>("TipoContenido").IsRequired().HasMaxLength(255).HasColumnType("nvarchar(255)");
+                    b.Property<Guid>("UsuarioId").HasColumnType("uniqueidentifier");
+                    b.HasKey("Id");
+                    b.HasIndex("ArchivoId", "Numero").IsUnique();
+                    b.ToTable("ArchivoVersiones");
+                });
+
             modelBuilder.Entity("GestorArchivos.Domain.Entities.Archivo", b =>
                 {
                     b.Property<Guid>("Id")

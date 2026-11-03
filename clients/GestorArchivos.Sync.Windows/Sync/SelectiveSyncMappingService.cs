@@ -39,7 +39,7 @@ public sealed class SelectiveSyncMappingService
                     PropertyNameCaseInsensitive = true
                 })
             ?? throw new InvalidOperationException(
-                "La configuraciÛn de selecciÛn no es v·lida.");
+                "La configuraci√≥n de selecci√≥n no es v√°lida.");
 
         var snapshot = await _syncApiClient.GetSnapshotAsync(
             cancellationToken);
@@ -50,9 +50,56 @@ public sealed class SelectiveSyncMappingService
         return BuildMappings(selections, snapshot, items);
     }
 
+    // Desvincular asociaciones antiguas de la ra√≠z que ya no est√°n en el selector.
+    // Nunca borrar contenido remoto ni local: solo retirar la protecci√≥n Sync.
+    public async Task ReconcileRemovedRootSelectionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(SelectionsPath))
+            return;
+
+        var json = await File.ReadAllTextAsync(SelectionsPath, cancellationToken);
+        var selections = JsonSerializer.Deserialize<List<SelectiveSyncSelection>>(
+            json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            ?? throw new InvalidOperationException("La configuraci√≥n de selecci√≥n no es v√°lida.");
+
+        var selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var selection in selections)
+        {
+            if (selection is null || string.IsNullOrWhiteSpace(selection.Path) ||
+                !Path.IsPathFullyQualified(selection.Path) ||
+                (selection.Kind != 0 && selection.Kind != 1))
+                throw new InvalidOperationException("La configuraci√≥n contiene una selecci√≥n inv√°lida.");
+            selectedPaths.Add(NormalizePath(selection.Path));
+        }
+
+        var snapshot = await _syncApiClient.GetSnapshotAsync(cancellationToken);
+        if (snapshot.RootFolderId == Guid.Empty)
+            throw new InvalidOperationException("La ra√≠z de sincronizaci√≥n no est√° disponible.");
+
+        var items = await _syncApiClient.GetItemsAsync(cancellationToken);
+        foreach (var item in items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var isRootFolder = item.Tipo == SyncItemType.Folder &&
+                item.CarpetaRemotaId.HasValue && snapshot.Folders.Any(folder =>
+                    folder.Id == item.CarpetaRemotaId.Value &&
+                    folder.CarpetaPadreId == snapshot.RootFolderId);
+            var isRootFile = item.Tipo == SyncItemType.File &&
+                item.ArchivoRemotoId.HasValue && snapshot.Files.Any(file =>
+                    file.Id == item.ArchivoRemotoId.Value &&
+                    file.CarpetaId == snapshot.RootFolderId);
+
+            if ((isRootFolder || isRootFile) &&
+                !selectedPaths.Contains(NormalizePath(item.RutaLocal)))
+                await _syncApiClient.DeleteItemAsync(item.SyncItemId, cancellationToken);
+        }
+    }
+
     public async Task<IReadOnlyList<SelectiveSyncMapping>> PrepareMappingsAsync(
         CancellationToken cancellationToken = default)
     {
+        await DetachTrashedSelectionsAsync(cancellationToken);
         var mappings = await GetMappingsAsync(cancellationToken);
 
         if (mappings.Count == 0)
@@ -63,7 +110,7 @@ public sealed class SelectiveSyncMappingService
 
         if (snapshot.RootFolderId == Guid.Empty)
             throw new InvalidOperationException(
-                "El dispositivo no tiene una carpeta raÌz v·lida.");
+                "El dispositivo no tiene una carpeta ra√≠z v√°lida.");
 
         var items = await _syncApiClient.GetItemsAsync(
             cancellationToken);
@@ -76,7 +123,7 @@ public sealed class SelectiveSyncMappingService
 
             if (mapping.DeviceRootFolderId != snapshot.RootFolderId)
                 throw new InvalidOperationException(
-                    "La carpeta raÌz cambiÛ durante la preparaciÛn.");
+                    "La carpeta ra√≠z cambi√≥ durante la preparaci√≥n.");
 
             ValidateLocalSelection(mapping);
 
@@ -98,13 +145,13 @@ public sealed class SelectiveSyncMappingService
                     associated.SyncItemId != mapping.SyncItemId.Value)
                 {
                     throw new InvalidOperationException(
-                        $"La asociaciÛn de '{mapping.LocalPath}' cambiÛ.");
+                        $"La asociaci√≥n de '{mapping.LocalPath}' cambi√≥.");
                 }
             }
             else if (associated is not null)
             {
                 throw new InvalidOperationException(
-                    $"ApareciÛ una asociaciÛn inesperada para '{mapping.LocalPath}'.");
+                    $"Apareci√≥ una asociaci√≥n inesperada para '{mapping.LocalPath}'.");
             }
 
             if (mapping.Kind == 1)
@@ -146,7 +193,7 @@ public sealed class SelectiveSyncMappingService
                 else if (remoteFolders.Count > 0)
                 {
                     throw new InvalidOperationException(
-                        $"La carpeta remota '{name}' ya existe sin asociaciÛn verificable.");
+                        $"La carpeta remota '{name}' ya existe sin asociaci√≥n verificable.");
                 }
 
                 if (mapping.RemoteFolderId.HasValue)
@@ -199,7 +246,7 @@ public sealed class SelectiveSyncMappingService
                 else if (remoteFiles.Count > 0)
                 {
                     throw new InvalidOperationException(
-                        $"El archivo remoto '{name}' ya existe sin asociaciÛn verificable.");
+                        $"El archivo remoto '{name}' ya existe sin asociaci√≥n verificable.");
                 }
 
                 if (mapping.RemoteFileId.HasValue)
@@ -216,6 +263,45 @@ public sealed class SelectiveSyncMappingService
         }
 
         return mappings;
+    }
+
+    private async Task DetachTrashedSelectionsAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(SelectionsPath)) return;
+        var selections = JsonSerializer.Deserialize<List<SelectiveSyncSelection>>(
+            await File.ReadAllTextAsync(SelectionsPath, cancellationToken),
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+
+        var snapshot = await _syncApiClient.GetSnapshotAsync(cancellationToken);
+        if (snapshot.RootFolderId == Guid.Empty)
+            throw new InvalidOperationException("La ra√≠z de sincronizaci√≥n no est√° disponible.");
+        var items = await _syncApiClient.GetItemsAsync(cancellationToken);
+
+        foreach (var selection in selections)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (selection is null || string.IsNullOrWhiteSpace(selection.Path) ||
+                !Path.IsPathFullyQualified(selection.Path) ||
+                (selection.Kind != 0 && selection.Kind != 1)) continue;
+
+            var path = NormalizePath(selection.Path);
+            var matches = items.Where(x => PathsEqual(x.RutaLocal, path)).ToList();
+            if (matches.Count != 1) continue;
+            var item = matches[0];
+
+            if (selection.Kind == 1 && item.Tipo == SyncItemType.Folder &&
+                item.CarpetaRemotaId.HasValue &&
+                !snapshot.Folders.Any(x => x.Id == item.CarpetaRemotaId.Value))
+            {
+                await _syncApiClient.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
+            }
+            else if (selection.Kind == 0 && item.Tipo == SyncItemType.File &&
+                item.ArchivoRemotoId.HasValue &&
+                !snapshot.Files.Any(x => x.Id == item.ArchivoRemotoId.Value))
+            {
+                await _syncApiClient.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
+            }
+        }
     }
 
     public async Task<IReadOnlyList<SelectiveSyncMapping>> CreateMissingFoldersAsync(
@@ -244,7 +330,7 @@ public sealed class SelectiveSyncMappingService
 
             if (snapshot.RootFolderId != mapping.DeviceRootFolderId)
                 throw new InvalidOperationException(
-                    "La carpeta raÌz del dispositivo cambiÛ.");
+                    "La carpeta ra√≠z del dispositivo cambi√≥.");
 
             var currentMatches = items.Where(x =>
                 PathsEqual(x.RutaLocal, mapping.LocalPath)).ToList();
@@ -262,7 +348,7 @@ public sealed class SelectiveSyncMappingService
 
                 if (current.Tipo != SyncItemType.Folder ||
                     !current.CarpetaRemotaId.HasValue || !remoteMatch)
-                    throw new InvalidOperationException($"AsociaciÛn inv·lida: '{mapping.LocalPath}'.");
+                    throw new InvalidOperationException($"Asociaci√≥n inv√°lida: '{mapping.LocalPath}'.");
 
                 mapping.SyncItemId = current.SyncItemId;
                 mapping.RemoteFolderId = current.CarpetaRemotaId;
@@ -285,7 +371,7 @@ public sealed class SelectiveSyncMappingService
 
             if (occupiedByFolder || occupiedByFile)
                 throw new InvalidOperationException(
-                    $"El nombre remoto '{name}' ya est· ocupado.");
+                    $"El nombre remoto '{name}' ya est√° ocupado.");
 
             AtomicSyncFolderResult created;
             try
@@ -295,8 +381,8 @@ public sealed class SelectiveSyncMappingService
             }
             catch (Exception) when (!cancellationToken.IsCancellationRequested)
             {
-                // Si el servidor confirmÛ la transacciÛn pero se perdiÛ la respuesta,
-                // recuperar ˙nicamente la asociaciÛn exacta del dispositivo.
+                // Si el servidor confirm√≥ la transacci√≥n pero se perdi√≥ la respuesta,
+                // recuperar √∫nicamente la asociaci√≥n exacta del dispositivo.
                 var recovered = await _syncApiClient.GetItemsAsync(cancellationToken);
                 var recoveredMatches = recovered.Where(x =>
                     PathsEqual(x.RutaLocal, mapping.LocalPath)).ToList();
@@ -323,10 +409,10 @@ public sealed class SelectiveSyncMappingService
                     StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    $"El servidor devolviÛ una asociaciÛn atÛmica inv·lida para '{name}'.");
+                    $"El servidor devolvi√≥ una asociaci√≥n at√≥mica inv√°lida para '{name}'.");
             }
 
-            // Verificar contra el estado persistido, tambiÈn en reintentos.
+            // Verificar contra el estado persistido, tambi√©n en reintentos.
             var confirmedItems = await _syncApiClient.GetItemsAsync(cancellationToken);
             var matches = confirmedItems.Where(x =>
                 PathsEqual(x.RutaLocal, mapping.LocalPath)).ToList();
@@ -336,7 +422,7 @@ public sealed class SelectiveSyncMappingService
                 matches[0].CarpetaRemotaId != created.RemoteFolderId)
             {
                 throw new InvalidOperationException(
-                    $"No se pudo verificar la asociaciÛn atÛmica de '{name}'.");
+                    $"No se pudo verificar la asociaci√≥n at√≥mica de '{name}'.");
             }
 
             mapping.RemoteFolderId = created.RemoteFolderId;
@@ -353,7 +439,7 @@ public sealed class SelectiveSyncMappingService
     {
         if (snapshot.RootFolderId == Guid.Empty)
             throw new InvalidOperationException(
-                "El dispositivo no tiene una carpeta raÌz v·lida.");
+                "El dispositivo no tiene una carpeta ra√≠z v√°lida.");
 
         var result = new List<SelectiveSyncMapping>();
 
@@ -368,14 +454,14 @@ public sealed class SelectiveSyncMappingService
                 (selection.Kind != 0 && selection.Kind != 1))
             {
                 throw new InvalidOperationException(
-                    "La configuraciÛn contiene una selecciÛn inv·lida.");
+                    "La configuraci√≥n contiene una selecci√≥n inv√°lida.");
             }
 
             var localPath = NormalizePath(selection.Path);
 
             if (!visited.Add(localPath))
                 throw new InvalidOperationException(
-                    $"La ruta '{localPath}' est· seleccionada m·s de una vez.");
+                    $"La ruta '{localPath}' est√° seleccionada m√°s de una vez.");
 
             var matchingItems = items
                 .Where(x => PathsEqual(x.RutaLocal, localPath))
@@ -395,7 +481,7 @@ public sealed class SelectiveSyncMappingService
 
                 if (existing.Tipo != expectedType)
                     throw new InvalidOperationException(
-                        $"El tipo de asociaciÛn de '{localPath}' no coincide.");
+                        $"El tipo de asociaci√≥n de '{localPath}' no coincide.");
 
                 if (selection.Kind == 1 &&
                     !existing.CarpetaRemotaId.HasValue)
@@ -448,7 +534,7 @@ public sealed class SelectiveSyncMappingService
                     StringComparison.OrdinalIgnoreCase))
                 {
                     throw new InvalidOperationException(
-                        $"La selecciÛn '{other.LocalPath}' est· dentro de " +
+                        $"La selecci√≥n '{other.LocalPath}' est√° dentro de " +
                         $"la carpeta ya seleccionada '{folder.LocalPath}'.");
                 }
             }
@@ -504,7 +590,7 @@ public sealed class SelectiveSyncMappingService
                     mapping.LocalPath);
         }
 
-        // No atravesar enlaces simbÛlicos, junctions
+        // No atravesar enlaces simb√≥licos, junctions
         // ni puntos de montaje.
         var current = mapping.LocalPath;
 
@@ -516,7 +602,7 @@ public sealed class SelectiveSyncMappingService
 
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                     throw new InvalidOperationException(
-                        $"La selecciÛn utiliza un enlace o punto de montaje: '{current}'.");
+                        $"La selecci√≥n utiliza un enlace o punto de montaje: '{current}'.");
             }
 
             var parent = Path.GetDirectoryName(current);

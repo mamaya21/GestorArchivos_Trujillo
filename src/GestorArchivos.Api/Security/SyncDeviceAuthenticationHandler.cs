@@ -39,7 +39,7 @@ public sealed class SyncDeviceAuthenticationHandler
         var token = value["Bearer ".Length..].Trim();
 
         if (string.IsNullOrWhiteSpace(token))
-            return AuthenticateResult.Fail("Token inválido.");
+            return AuthenticateResult.Fail("Token invÃ¡lido.");
 
         var tokenHash = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(token)));
@@ -55,7 +55,17 @@ public sealed class SyncDeviceAuthenticationHandler
                 Context.RequestAborted);
 
         if (credential is null)
-            return AuthenticateResult.Fail("Credencial inválida.");
+            return AuthenticateResult.Fail("Credencial invÃ¡lida.");
+
+        var userActive = await _dbContext.Users
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.Id == credential.Dispositivo.UsuarioId &&
+                     x.Activo,
+                Context.RequestAborted);
+
+        if (!userActive)
+            return AuthenticateResult.Fail("Usuario inactivo o inexistente.");
 
         var claims = new[]
         {

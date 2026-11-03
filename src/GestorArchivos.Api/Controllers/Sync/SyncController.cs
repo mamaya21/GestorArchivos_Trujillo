@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using GestorArchivos.Api.Security;
+using GestorArchivos.Application.Common.Interfaces;
 using GestorArchivos.Application.Common.Security;
 using GestorArchivos.Domain.Entities;
 using GestorArchivos.Domain.Enums;
@@ -18,13 +19,16 @@ public class SyncController : ControllerBase
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IFolderPermissionService _permissionService;
+    private readonly ISyncChangeService _changes;
 
     public SyncController(
         ApplicationDbContext dbContext,
-        IFolderPermissionService permissionService)
+        IFolderPermissionService permissionService,
+        ISyncChangeService changes)
     {
         _dbContext = dbContext;
         _permissionService = permissionService;
+        _changes = changes;
     }
 
     [HttpGet("changes")]
@@ -48,6 +52,13 @@ public class SyncController : ControllerBase
 
         if (device is null)
             return Unauthorized();
+
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
+                device.RootFolderId,
+                PermisoCarpeta.Leer,
+                cancellationToken))
+            return Forbid();
 
         var changes = await _dbContext.CambiosSync
             .AsNoTracking()
@@ -129,6 +140,13 @@ public class SyncController : ControllerBase
         if (device is null)
             return Unauthorized();
 
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
+                device.RootFolderId,
+                PermisoCarpeta.Leer,
+                cancellationToken))
+            return Forbid();
+
         var items = await _dbContext.ElementosSync
             .AsNoTracking()
             .Where(x =>
@@ -147,6 +165,36 @@ public class SyncController : ControllerBase
             })
             .ToListAsync(cancellationToken);
 
+        return Ok(items);
+    }
+
+    // Historical mappings are read separately so normal synchronization never
+    // mistakes inactive associations for current ownership of a local path.
+    [HttpGet("items/inactive")]
+    public async Task<IActionResult> GetInactiveItems(CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (!await _permissionService.HasPermissionAsync(
+                userId, device.RootFolderId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+
+        var items = await _dbContext.ElementosSync.AsNoTracking()
+            .Where(x => x.DispositivoId == deviceId && !x.Activo)
+            .OrderBy(x => x.RutaLocal)
+            .Select(x => new
+            {
+                syncItemId = x.Id,
+                x.RutaLocal,
+                x.Tipo,
+                x.CarpetaRemotaId,
+                x.ArchivoRemotoId,
+                x.FechaCreacion,
+                x.UltimaSincronizacionUtc
+            })
+            .ToListAsync(cancellationToken);
         return Ok(items);
     }
 
@@ -170,7 +218,7 @@ public class SyncController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "El tipo de elemento no es v·lido."
+                message = "El tipo de elemento no es v√°lido."
             });
         }
 
@@ -196,7 +244,7 @@ public class SyncController : ControllerBase
         {
             return Conflict(new
             {
-                message = "Esta ruta local ya est· sincronizada."
+                message = "Esta ruta local ya est√° sincronizada."
             });
         }
 
@@ -210,7 +258,7 @@ public class SyncController : ControllerBase
             {
                 return BadRequest(new
                 {
-                    message = "Para una carpeta debe indicarse ˙nicamente RemoteFolderId."
+                    message = "Para una carpeta debe indicarse √∫nicamente RemoteFolderId."
                 });
             }
 
@@ -236,6 +284,13 @@ public class SyncController : ControllerBase
                     cancellationToken))
                 return Forbid();
 
+            if (!await _permissionService.HasPermissionAsync(
+                    userId,
+                    remoteFolder.Id,
+                    PermisoCarpeta.Leer,
+                    cancellationToken))
+                return Forbid();
+
             var duplicateRemote = await _dbContext.ElementosSync
                 .AnyAsync(
                     x =>
@@ -248,7 +303,7 @@ public class SyncController : ControllerBase
             {
                 return Conflict(new
                 {
-                    message = "Esta carpeta remota ya est· registrada para sincronizaciÛn."
+                    message = "Esta carpeta remota ya est√° registrada para sincronizaci√≥n."
                 });
             }
 
@@ -261,7 +316,7 @@ public class SyncController : ControllerBase
             {
                 return BadRequest(new
                 {
-                    message = "Para un archivo debe indicarse ˙nicamente RemoteFileId."
+                    message = "Para un archivo debe indicarse √∫nicamente RemoteFileId."
                 });
             }
 
@@ -291,6 +346,13 @@ public class SyncController : ControllerBase
                     cancellationToken))
                 return Forbid();
 
+            if (!await _permissionService.HasPermissionAsync(
+                    userId,
+                    remoteFile.CarpetaId,
+                    PermisoCarpeta.Leer,
+                    cancellationToken))
+                return Forbid();
+
             var duplicateRemote = await _dbContext.ElementosSync
                 .AnyAsync(
                     x =>
@@ -303,7 +365,7 @@ public class SyncController : ControllerBase
             {
                 return Conflict(new
                 {
-                    message = "Este archivo remoto ya est· registrado para sincronizaciÛn."
+                    message = "Este archivo remoto ya est√° registrado para sincronizaci√≥n."
                 });
             }
 
@@ -389,7 +451,7 @@ public class SyncController : ControllerBase
         {
             return Conflict(new
             {
-                message = "Esta ruta local ya est· sincronizada."
+                message = "Esta ruta local ya est√° sincronizada."
             });
         }
 
@@ -445,6 +507,73 @@ public class SyncController : ControllerBase
         });
     }
 
+    // Desasociar un elemento seleccionado de nuevo √∫nicamente cuando su objeto
+    // remoto anterior est√° confirmado en la papelera. No elimina archivos.
+    [HttpPost("items/{syncItemId:guid}/detach-if-trashed")]
+    public async Task<IActionResult> DetachIfTrashed(
+        Guid syncItemId, CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (!await _permissionService.HasPermissionAsync(
+                userId, device.RootFolderId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+
+        var item = await _dbContext.ElementosSync.FirstOrDefaultAsync(
+            x => x.Id == syncItemId && x.DispositivoId == deviceId && x.Activo,
+            cancellationToken);
+        if (item is null) return NotFound();
+
+        bool trashed;
+        if (item.Tipo == TipoElementoSync.Carpeta && item.CarpetaRemotaId.HasValue)
+        {
+            trashed = await _dbContext.Carpetas.AnyAsync(
+                x => x.Id == item.CarpetaRemotaId.Value && x.EnPapelera,
+                cancellationToken);
+        }
+        else if (item.Tipo == TipoElementoSync.Archivo && item.ArchivoRemotoId.HasValue)
+        {
+            trashed = await _dbContext.Archivos.AnyAsync(
+                x => x.Id == item.ArchivoRemotoId.Value &&
+                     x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
+        }
+        else return Conflict(new { message = "La asociaci√≥n remota no es v√°lida." });
+
+        if (!trashed)
+            return Conflict(new { message = "El contenido remoto no est√° confirmado en la papelera." });
+
+        item.Activo = false;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return NoContent();
+    }
+
+    [HttpGet("items/{syncItemId:guid}/trash-status")]
+    public async Task<IActionResult> GetTrashStatus(Guid syncItemId, CancellationToken cancellationToken)
+    {
+        var deviceId = CurrentDeviceId();
+        var userId = CurrentUserId();
+        var device = await GetDeviceAsync(deviceId, userId, cancellationToken);
+        if (device is null) return Unauthorized();
+        if (!await _permissionService.HasPermissionAsync(
+                userId, device.RootFolderId, PermisoCarpeta.Leer, cancellationToken))
+            return Forbid();
+        var item = await _dbContext.ElementosSync.AsNoTracking().FirstOrDefaultAsync(
+            x => x.Id == syncItemId && x.DispositivoId == deviceId && x.Activo,
+            cancellationToken);
+        if (item is null) return NotFound();
+        bool trashed;
+        if (item.Tipo == TipoElementoSync.Carpeta && item.CarpetaRemotaId.HasValue)
+            trashed = await _dbContext.Carpetas.AnyAsync(
+                x => x.Id == item.CarpetaRemotaId.Value && x.EnPapelera, cancellationToken);
+        else if (item.Tipo == TipoElementoSync.Archivo && item.ArchivoRemotoId.HasValue)
+            trashed = await _dbContext.Archivos.AnyAsync(
+                x => x.Id == item.ArchivoRemotoId.Value && x.Estado == EstadoArchivo.EnPapelera, cancellationToken);
+        else return Conflict(new { message = "Asociaci√≥n remota inv√°lida." });
+        return Ok(new { trashed });
+    }
+
     [HttpDelete("items/{syncItemId:guid}")]
     public async Task<IActionResult> RemoveItem(
         Guid syncItemId,
@@ -493,6 +622,13 @@ public class SyncController : ControllerBase
 
         if (device is null)
             return Unauthorized();
+
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
+                device.RootFolderId,
+                PermisoCarpeta.Leer,
+                cancellationToken))
+            return Forbid();
 
         var folders = await GetFolderTreeAsync(
             device.RootFolderId,

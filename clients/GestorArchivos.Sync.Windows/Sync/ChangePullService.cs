@@ -62,8 +62,8 @@ public sealed class ChangePullService
         if (File.Exists(SelectionsPath))
         {
             throw new InvalidOperationException(
-                "La descarga tradicional está suspendida " +
-                "mientras exista una configuración selectiva.");
+                "La descarga tradicional estÃ¡ suspendida " +
+                "mientras exista una configuraciÃ³n selectiva.");
         }
 
         while (!cancellationToken.IsCancellationRequested)
@@ -92,7 +92,7 @@ public sealed class ChangePullService
                     }
                 }
 
-                // Avanzar el cursor únicamente después
+                // Avanzar el cursor Ãºnicamente despuÃ©s
                 // de procesar satisfactoriamente el cambio.
                 _runtimeState.LastChangeId = change.Id;
                 _runtimeState.LastSuccessfulSyncUtc = DateTime.UtcNow;
@@ -170,7 +170,7 @@ public sealed class ChangePullService
         if (item is not null &&
             !PathsEqual(item.RutaLocal, newPath))
         {
-            // No mover ni sobrescribir automáticamente
+            // No mover ni sobrescribir automÃ¡ticamente
             // archivos cuando cambia su ruta remota.
             return;
         }
@@ -178,7 +178,7 @@ public sealed class ChangePullService
         var localExists = File.Exists(newFullPath);
 
         // El hash debe permanecer disponible durante
-        // toda la operación, no solamente dentro del if.
+        // toda la operaciÃ³n, no solamente dentro del if.
         string? localHash = null;
 
         if (localExists)
@@ -208,12 +208,12 @@ public sealed class ChangePullService
             }
 
             // Nunca reemplazar un archivo local
-            // que no esté asociado al archivo remoto.
+            // que no estÃ© asociado al archivo remoto.
             if (item is null)
             {
                 throw new IOException(
                     $"Existe un archivo local no asociado en '{newPath}'. " +
-                    "Se bloqueó la descarga para evitar sobrescribirlo.");
+                    "Se bloqueÃ³ la descarga para evitar sobrescribirlo.");
             }
 
             var baselineItems = await _baselineStore.LoadAsync(
@@ -222,30 +222,53 @@ public sealed class ChangePullService
             var previous = baselineItems.FirstOrDefault(
                 x => x.SyncItemId == item.SyncItemId);
 
-            // Sin baseline verificable, no se permite
-            // reemplazar el contenido local.
+            // Exigir baseline verificable antes de resolver cambios.
             if (previous is null ||
-                !HashesEqual(previous.LocalHash, localHash))
+                string.IsNullOrWhiteSpace(previous.LocalHash) ||
+                string.IsNullOrWhiteSpace(previous.RemoteHash) ||
+                !previous.RemoteVersion.HasValue)
             {
                 throw new IOException(
-                    $"El archivo '{newPath}' contiene cambios locales " +
-                    "o carece de un baseline confiable. " +
-                    "Se bloqueó la sobrescritura.");
+                    $"El archivo '{newPath}' carece de un baseline confiable. " +
+                    "Se bloqueÃ³ la sobrescritura.");
             }
 
-            // Evitar descargar cuando el remoto
-            // no cambió respecto del baseline.
-            if (previous.RemoteVersion == remote.Version &&
-                HashesEqual(
+            var localChanged = !HashesEqual(
+                previous.LocalHash,
+                localHash);
+
+            var remoteChanged =
+                previous.RemoteVersion != remote.Version ||
+                !HashesEqual(
                     previous.RemoteHash,
-                    remote.HashSha256))
+                    remote.HashSha256);
+
+            if (!remoteChanged)
             {
+                // El cambio local serÃ¡ atendido por la subida.
                 return;
+            }
+
+            if (localChanged)
+            {
+                // No sobrescribir cambios simultÃ¡neos sin conservarlos.
+                await _conflictService.CreateConflictCopyAsync(
+                    new SyncConflict
+                    {
+                        FileId = remote.Id,
+                        LocalPath = newPath,
+                        LocalVersion = previous.RemoteVersion.Value,
+                        RemoteVersion = remote.Version,
+                        LocalHash = localHash,
+                        RemoteHash = remote.HashSha256,
+                        DetectedUtc = DateTime.UtcNow
+                    },
+                    cancellationToken);
             }
 
             // Reemplazo condicionado al hash local.
             // Si el archivo cambia durante la descarga,
-            // el almacenamiento rechazará la escritura.
+            // el almacenamiento rechazarÃ¡ la escritura.
             await _downloadService.DownloadIfUnchangedAsync(
                 fileId,
                 newPath,
@@ -254,15 +277,15 @@ public sealed class ChangePullService
         }
         else
         {
-            // Si existía una asociación anterior,
+            // Si existÃ­a una asociaciÃ³n anterior,
             // la ausencia del archivo no se interpreta
-            // automáticamente como autorización para
+            // automÃ¡ticamente como autorizaciÃ³n para
             // recrearlo o reemplazarlo.
             if (item is not null)
                 return;
 
-            // Descarga inicial: crear únicamente
-            // si el archivo continúa sin existir.
+            // Descarga inicial: crear Ãºnicamente
+            // si el archivo continÃºa sin existir.
             await _downloadService.DownloadAsync(
                 fileId,
                 newPath,
@@ -303,7 +326,7 @@ public sealed class ChangePullService
             updatedRemote.HashSha256))
         {
             throw new IOException(
-                $"El archivo remoto cambió durante la sincronización: " +
+                $"El archivo remoto cambiÃ³ durante la sincronizaciÃ³n: " +
                 $"'{relativePath}'.");
         }
 
@@ -316,7 +339,7 @@ public sealed class ChangePullService
         if (currentItem is null)
         {
             throw new InvalidOperationException(
-                $"No se encontró la asociación Sync para '{relativePath}'.");
+                $"No se encontrÃ³ la asociaciÃ³n Sync para '{relativePath}'.");
         }
 
         var baseline = (await _baselineStore.LoadAsync(
@@ -384,7 +407,7 @@ public sealed class ChangePullService
         {
             if (item is not null)
             {
-                // Podría ser una unidad desconectada.
+                // PodrÃ­a ser una unidad desconectada.
                 return;
             }
 

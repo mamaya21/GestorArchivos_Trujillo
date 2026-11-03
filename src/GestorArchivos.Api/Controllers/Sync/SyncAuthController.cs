@@ -39,6 +39,16 @@ public class SyncAuthController : ControllerBase
         if (credential is null)
             return Unauthorized();
 
+        var userActive = await _dbContext.Users
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.Id == credential.Dispositivo.UsuarioId &&
+                     x.Activo,
+                cancellationToken);
+
+        if (!userActive)
+            return Unauthorized();
+
         var now = DateTime.UtcNow;
 
         credential.UltimoUsoUtc = now;

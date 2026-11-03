@@ -10,8 +10,8 @@ namespace GestorArchivos.IntegrationTests;
 public sealed class GestorArchivosWebApplicationFactory
     : WebApplicationFactory<Program>
 {
-    public const string TestDatabaseName =
-        "GestorArchivosDb_IntegrationTests";
+    public static readonly string TestDatabaseName =
+        $"GestorArchivosDb_IntegrationTests_{Guid.NewGuid():N}";
 
     public string StorageRoot { get; } =
         Path.Combine(
@@ -22,6 +22,15 @@ public sealed class GestorArchivosWebApplicationFactory
     protected override void ConfigureWebHost(
         IWebHostBuilder builder)
     {
+        // Instancia compartida, base de datos exclusiva con nombre aleatorio.
+        if (Environment.GetEnvironmentVariable("GESTOR_TEST_ALLOW_SHARED_INSTANCE") != "1")
+            throw new InvalidOperationException(
+                "Para ejecutar pruebas en una base independiente, establezca GESTOR_TEST_ALLOW_SHARED_INSTANCE=1.");
+
+        if (!TestDatabaseName.StartsWith("GestorArchivosDb_IntegrationTests_", StringComparison.Ordinal)
+            || TestDatabaseName.Length <= "GestorArchivosDb_IntegrationTests_".Length)
+            throw new InvalidOperationException("Nombre de base de pruebas no seguro.");
+
         builder.UseEnvironment("Testing");
 
         Environment.SetEnvironmentVariable(

@@ -242,6 +242,13 @@ public class SyncFolderOperationsController : ControllerBase
 
         if (!await _permissionService.HasPermissionAsync(
                 userId,
+                folder.Id,
+                PermisoCarpeta.Modificar,
+                cancellationToken))
+            return Forbid();
+
+        if (!await _permissionService.HasPermissionAsync(
+                userId,
                 request.DestinationFolderId,
                 PermisoCarpeta.Crear,
                 cancellationToken))
@@ -251,7 +258,7 @@ public class SyncFolderOperationsController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "Una carpeta no puede moverse dentro de sÌ misma."
+                message = "Una carpeta no puede moverse dentro de s√≠ misma."
             });
         }
 
@@ -550,7 +557,7 @@ public class SyncFolderOperationsController : ControllerBase
 
         if (normalizedName is "." or "..")
         {
-            error = "El nombre no es v·lido.";
+            error = "El nombre no es v√°lido.";
             return false;
         }
 
