@@ -211,11 +211,9 @@ public class SyncDevicesController : ControllerBase
             });
         }
 
-        // Un alta nueva no puede duplicar un dispositivo activo.
-        if (await _dbContext.DispositivosSync.AnyAsync(
-            x => x.UsuarioId == userId && x.Nombre == deviceName && x.Activo,
+        // El nombre físico del equipo es único entre dispositivos activos,\n        // independientemente de la cuenta web que solicita el registro.\n        if (await _dbContext.DispositivosSync.AnyAsync(\n            x => x.Nombre == deviceName && x.Activo,
             cancellationToken))
-            return Conflict(new { message = "Ya existe un dispositivo activo con ese nombre." });
+            return Conflict(new { message = "Este equipo ya tiene una vinculación activa. Desvincúlelo desde su cuenta original antes de registrarlo nuevamente." });
 
         var folderName = await GetAvailableRootFolderNameAsync(
             deviceName,
