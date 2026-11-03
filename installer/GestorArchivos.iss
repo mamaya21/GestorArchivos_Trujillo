@@ -44,6 +44,9 @@ Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; Group
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "GestorArchivosSelectorAgent"; ValueData: """{app}\Selector\GestorArchivos.Sync.Selector.Windows.exe"" --agent"; Flags: uninsdeletevalue
 
+[Run]
+Filename: "{app}\Selector\GestorArchivos.Sync.Selector.Windows.exe"; Parameters: "--agent"; Description: "Iniciar selector de sincronización"; Flags: nowait runasoriginaluser
+
 [Code]
 const
   ServiceKey = '{#ServiceName}';
