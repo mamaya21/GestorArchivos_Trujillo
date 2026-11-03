@@ -95,18 +95,18 @@ begin
     'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
     'GESTOR_ARCHIVOS_WEB_ORIGIN', WebUrl);
 
-  { La clave del servicio determina si debemos crear o actualizar. }
+  { sc.exe requiere una ruta binaria entre comillas, sin barras invertidas. }
   if RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\' + ServiceKey) then
   begin
     RunSC('stop "' + ServiceKey + '"');
-    if not RunSC('config "' + ServiceKey + '" binPath= "\"' +
-      ServiceExe + '\"" start= auto') then
+    if not RunSC('config "' + ServiceKey + '" binPath= ' +
+      '""' + ServiceExe + '"" start= auto') then
       RaiseException('No se pudo actualizar el servicio. Revisa el registro de instalación.');
   end
   else
   begin
-    if not RunSC('create "' + ServiceKey + '" binPath= "\"' +
-      ServiceExe + '\"" start= auto DisplayName= "Gestor Archivos Sync"') then
+    if not RunSC('create "' + ServiceKey + '" binPath= ' +
+      '""' + ServiceExe + '"" start= auto DisplayName= "Gestor Archivos Sync"') then
       RaiseException('No se pudo crear el servicio. Revisa el registro de instalación.');
   end;
 
