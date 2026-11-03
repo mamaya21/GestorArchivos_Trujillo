@@ -1568,8 +1568,8 @@ export default function FilesPage() {
           <p style="font-size:13px">Las selecciones se administran desde el selector de sincronización. Desvincular conserva los archivos locales y remotos.</p>`,
         showCancelButton: true,
         showDenyButton: linkedHere !== undefined,
-        showConfirmButton: active.length === 0 || linkedHere !== undefined,
-        confirmButtonText: active.length === 0 ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
+        showConfirmButton: true,
+        confirmButtonText: !linkedHere ? 'Activar' : localState?.paused ? 'Reanudar' : 'Pausar',
         denyButtonText: 'Desvincular este equipo',
         cancelButtonText: 'Cerrar',
         width: 540,
@@ -1650,7 +1650,7 @@ export default function FilesPage() {
       }
       if (!result.isConfirmed) return
 
-      if (active.length === 0) {
+      if (!linkedHere) {
         if (localState === null) {
           const install = await Swal.fire({
             icon: 'info',
