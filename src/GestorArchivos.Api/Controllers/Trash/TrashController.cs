@@ -601,7 +601,7 @@ public sealed class TrashController : ControllerBase
         // Los bloqueos asociados a dispositivos retirados también impiden
         // eliminar físicamente esos dispositivos.
         var retiredLocks = await _dbContext.BloqueosArchivos
-            .Where(b => retiredDeviceIds.Contains(b.DispositivoId))
+            .Where(b => b.DispositivoId.HasValue && retiredDeviceIds.Contains(b.DispositivoId.Value))
             .ToListAsync(cancellationToken);
 
         _dbContext.BloqueosArchivos.RemoveRange(retiredLocks);
