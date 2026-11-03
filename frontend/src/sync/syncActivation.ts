@@ -70,15 +70,23 @@ export async function ensureLocalSyncReady(): Promise<void> {
 export async function activateSyncOnThisComputer(reuseDeviceId?: string, reuseDeviceName?: string): Promise<void> {
   await ensureLocalSyncReady()
 
+  const localControl = await fetch('http://127.0.0.1:47831/control', {
+    method: 'GET', cache: 'no-store', signal: AbortSignal.timeout(4000),
+  })
+  if (!localControl.ok) throw new Error('No se pudo identificar el equipo local.')
+  const localState: unknown = await localControl.json()
+  const hostName = localState && typeof localState === 'object' && 'hostName' in localState &&
+    typeof (localState as { hostName: unknown }).hostName === 'string'
+    ? (localState as { hostName: string }).hostName.trim() : ''
+  if (!hostName) throw new Error('Actualiza el cliente de sincronización para registrar el nombre real del equipo.')
+
   const registration =
     await apiRequest<RegisterSyncDeviceResponse>(
       '/sync/devices/register',
       {
         method: 'POST',
         body: JSON.stringify({
-          name: reuseDeviceName ?? (window.navigator.userAgent.includes('Windows')
-            ? `Windows - ${window.location.hostname}`
-            : window.location.hostname),
+          name: hostName,
           reuseDeviceId,
           operatingSystem: 'Windows',
         }),
