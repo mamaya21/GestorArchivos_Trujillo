@@ -1484,17 +1484,20 @@ public sealed class SelectiveSyncService
             if (!await _api.IsItemTrashedAsync(mapped.SyncItemId, cancellationToken))
                 continue;
 
+            // La ruta puede haber sido recreada y seleccionada nuevamente después
+            // de enviar la carpeta anterior a la Papelera. La ruta por sí sola
+            // no demuestra que el directorio físico sea el objeto eliminado.
+            // No enviar nunca una carpeta existente a la Papelera por una
+            // asociación remota antigua: conservar su contenido y aplazar
+            // la reconciliación hasta verificar una identidad nueva.
             if (Directory.Exists(mapped.RutaLocal))
             {
-                ValidatePathWithoutLinks(mapped.RutaLocal);
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
-                    mapped.RutaLocal,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                Console.WriteLine($"[SyncFolder] Carpeta local conservada ante eliminación remota antigua: {mapped.RutaLocal}");
+                continue;
             }
 
             await _api.DetachTrashedItemAsync(mapped.SyncItemId, cancellationToken);
-            Console.WriteLine($"[SyncFolder] Carpeta enviada a papelera local: {mapped.RutaLocal}");
+            Console.WriteLine($"[SyncFolder] Asociación de carpeta eliminada retirada: {mapped.RutaLocal}");
         }
 
         var localFolders = Directory
@@ -2266,19 +2269,14 @@ public sealed class SelectiveSyncService
                 continue;
             }
 
+            // La ruta puede contener un archivo nuevo con el mismo nombre
+            // después de recrear la carpeta seleccionada. No inferir identidad
+            // únicamente a partir de la ruta y no retirar su contenido.
             if (File.Exists(localPath))
             {
-                ValidatePathWithoutLinks(localPath);
-                var recoveryDirectory = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                    "GestorArchivos", "Sync", "ArchivosRecuperados");
-                Directory.CreateDirectory(recoveryDirectory);
-                var recoveryPath = Path.Combine(recoveryDirectory,
-                    $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}_{Path.GetFileName(localPath)}");
-                File.Move(localPath, recoveryPath);
-                localFiles.Remove(Path.GetFileName(localPath));
                 Console.WriteLine(
-                    $"[SyncFolder] Eliminación web confirmada. Copia local recuperable: {recoveryPath}");
+                    $"[SyncFolder] Archivo local conservado ante eliminación remota; identidad pendiente de verificar: {localPath}");
+                continue;
             }
 
             await _api.DetachTrashedItemAsync(item.SyncItemId, cancellationToken);
