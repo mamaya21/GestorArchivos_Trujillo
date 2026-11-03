@@ -2165,7 +2165,41 @@ public sealed class SelectiveSyncService
                 if (destinationFolder is null ||
                     !Directory.Exists(destinationFolder.RutaLocal))
                 {
-                    Console.WriteLine($"[SyncMove] Destino remoto sin carpeta local asociada: {item.RutaLocal}");
+                    // El archivo fue movido en la web fuera del árbol local
+                    // sincronizado. No debe quedar como archivo fantasma ni
+                    // volver a subirse al seleccionar nuevamente esta carpeta.
+                    // Retirar solo una copia idéntica a la versión remota,
+                    // conservándola recuperable y sin modificar el archivo web.
+                    var orphanPath = Path.GetFullPath(item.RutaLocal);
+                    if (Directory.Exists(orphanPath))
+                    {
+                        Console.WriteLine($"[SyncMove] Tipo local incompatible; se conserva: {orphanPath}");
+                        continue;
+                    }
+                    if (File.Exists(orphanPath))
+                    {
+                        ValidatePathWithoutLinks(orphanPath);
+                        if (!HashesEqual(
+                            await HashLocalAsync(orphanPath, cancellationToken),
+                            active.HashSha256))
+                        {
+                            Console.WriteLine($"[SyncMove] Archivo local modificado; se conserva: {orphanPath}");
+                            continue;
+                        }
+
+                        var recoveryDirectory = Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                            "GestorArchivos", "Sync", "ArchivosRecuperados");
+                        Directory.CreateDirectory(recoveryDirectory);
+                        File.Move(orphanPath, Path.Combine(recoveryDirectory,
+                            $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}_{Path.GetFileName(orphanPath)}"));
+                        localFiles.Remove(Path.GetFileName(orphanPath));
+                    }
+
+                    // DeleteItemAsync retira la asociación Sync del equipo;
+                    // no elimina el archivo remoto, que sigue activo.
+                    await _api.DeleteItemAsync(item.SyncItemId, cancellationToken);
+                    Console.WriteLine($"[SyncMove] Archivo movido fuera del árbol local; asociación retirada: {orphanPath}");
                     continue;
                 }
 
